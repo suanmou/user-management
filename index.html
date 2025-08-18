@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>用户管理系统</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+  
+  <!-- Tailwind 配置 -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#165DFF',
+            secondary: '#36CFC9',
+            success: '#52C41A',
+            warning: '#FAAD14',
+            danger: '#FF4D4F',
+            neutral: {
+              100: '#F5F5F5',
+              200: '#E5E5E5',
+              300: '#D4D4D4',
+              400: '#A3A3A3',
+              500: '#737373',
+              600: '#525252',
+              700: '#404040',
+              800: '#262626',
+              900: '#171717',
+            }
+          },
+          fontFamily: {
+            inter: ['Inter', 'system-ui', 'sans-serif'],
+          },
+          boxShadow: {
+            card: '0 2px 8px rgba(0, 0, 0, 0.08)',
+            'card-hover': '0 4px 16px rgba(0, 0, 0, 0.12)',
+            dropdown: '0 4px 16px rgba(0, 0, 0, 0.12)',
+          }
+        },
+      }
+    }
+  </script>
+  
+  <style type="text/tailwindcss">
+    @layer utilities {
+      .content-auto {
+        content-visibility: auto;
+      }
+      .transition-bg {
+        transition: background-color 0.2s ease;
+      }
+      .transition-transform {
+        transition: transform 0.2s ease;
+      }
+      .transition-all-300 {
+        transition: all 0.3s ease;
+      }
+      .scrollbar-hide {
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+      }
+      .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+      }
+      .text-balance {
+        text-wrap: balance;
+      }
+      .animate-pulse-slow {
+        animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      }
+    }
+  </style>
+</head>
+
+<body class="font-inter bg-neutral-100 text-neutral-800 min-h-screen flex flex-col">
+  <!-- 顶部导航栏 -->
+  <header class="bg-white shadow-sm sticky top-0 z-30">
+    <div class="container mx-auto px-4">
+      <div class="flex items-center justify-between h-16">
+        <!-- 左侧Logo和标题 -->
+        <div class="flex items-center space-x-4">
+          <button id="sidebar-toggle" class="lg:hidden p-2 rounded-md hover:bg-neutral-100 transition-bg">
+            <i class="fa fa-bars text-neutral-600"></i>
+          </button>
+          <div class="flex items-center">
+            <div class="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
+              <i class="fa fa-users text-white"></i>
+            </div>
+            <h1 class="ml-2 text-lg font-semibold text-neutral-800">用户管理系统</h1>
+          </div>
+        </div>
+        
+        <!-- 中间搜索框 -->
+        <div class="hidden md:flex items-center flex-1 max-w-md mx-8">
+          <div class="relative w-full">
+            <input type="text" placeholder="全局搜索..." class="w-full pl-10 pr-4 py-2 rounded-md border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all-300" />
+            <i class="fa fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-neutral-400"></i>
+          </div>
+        </div>
+        
+        <!-- 右侧用户信息和操作 -->
+        <div class="flex items-center space-x-4">
+          <button class="p-2 rounded-full hover:bg-neutral-100 relative transition-bg">
+            <i class="fa fa-bell-o text-neutral-600"></i>
+            <span class="absolute top-1 right-1 w-2 h-2 bg-danger rounded-full"></span>
+          </button>
+          <div class="flex items-center cursor-pointer group">
+            <img src="https://picsum.photos/id/1005/40/40" alt="用户头像" class="w-8 h-8 rounded-full object-cover border-2 border-transparent group-hover:border-primary transition-all-300" />
+            <span class="ml-2 hidden md:inline text-sm font-medium">管理员</span>
+            <i class="fa fa-angle-down ml-1 text-neutral-500 group-hover:text-primary transition-all-300"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="flex flex-1 overflow-hidden">
+    <!-- 侧边栏导航 -->
+    <aside id="sidebar" class="w-64 bg-white shadow-sm fixed lg:static h-[calc(100vh-4rem)] z-20 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out">
+      <nav class="h-full flex flex-col">
+        <div class="p-4 border-b border-neutral-200">
+          <p class="text-xs font-medium text-neutral-500 uppercase tracking-wider">主导航</p>
+        </div>
+        
+        <ul class="flex-1 overflow-y-auto scrollbar-hide p-2">
+          <li class="mb-1">
+            <a href="#" class="flex items-center px-4 py-2.5 rounded-md text-neutral-600 hover:bg-primary/5 hover:text-primary transition-all-300">
+              <i class="fa fa-tachometer w-5 text-center"></i>
+              <span class="ml-3">仪表盘</span>
+            </a>
+          </li>
+          <li class="mb-1">
+            <a href="#" class="flex items-center px-4 py-2.5 rounded-md bg-primary/10 text-primary font-medium transition-all-300">
+              <i class="fa fa-user-circle w-5 text-center"></i>
+              <span class="ml-3">用户管理</span>
+              <span class="ml-auto bg-primary text-white text-xs px-2 py-0.5 rounded-full">12</span>
+            </a>
+          </li>
+          <li class="mb-1">
+            <a href="#" class="flex items-center px-4 py-2.5 rounded-md text-neutral-600 hover:bg-primary/5 hover:text-primary transition-all-300">
+              <i class="fa fa-shield w-5 text-center"></i>
+              <span class="ml-3">安全设置</span>
+            </a>
+          </li>
+          <li class="mb-1">
+            <a href="#" class="flex items-center px-4 py-2.5 rounded-md text-neutral-600 hover:bg-primary/5 hover:text-primary transition-all-300">
+              <i class="fa fa-history w-5 text-center"></i>
+              <span class="ml-3">操作日志</span>
+            </a>
+          </li>
+          <li class="mb-1">
+            <a href="#" class="flex items-center px-4 py-2.5 rounded-md text-neutral-600 hover:bg-primary/5 hover:text-primary transition-all-300">
+              <i class="fa fa-cog w-5 text-center"></i>
+              <span class="ml-3">系统设置</span>
+            </a>
+          </li>
+        </ul>
+        
+        <div class="p-4 border-t border-neutral-200">
+          <div class="bg-primary/5 rounded-lg p-3">
+            <p class="text-sm text-neutral-700 mb-2">需要帮助?</p>
+            <a href="#" class="text-primary text-sm hover:underline flex items-center">
+              <i class="fa fa-question-circle mr-1"></i> 查看帮助文档
+            </a>
+          </div>
+        </div>
+      </nav>
+    </aside>
+
+    <!-- 主内容区域 -->
+    <main class="flex-1 overflow-y-auto bg-neutral-100 p-4 lg:p-6">
+      <!-- 面包屑导航 -->
+      <div class="flex items-center text-sm text-neutral-500 mb-6">
+        <a href="#" class="hover:text-primary">首页</a>
+        <i class="fa fa-angle-right mx-2 text-neutral-400 text-xs"></i>
+        <a href="#" class="hover:text-primary">用户管理</a>
+        <i class="fa fa-angle-right mx-2 text-neutral-400 text-xs"></i>
+        <span class="text-neutral-700">用户详情</span>
+      </div>
+      
+      <!-- 用户详情头部 -->
+      <div class="bg-white rounded-xl shadow-card p-6 mb-6">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 class="text-[clamp(1.25rem,3vw,1.75rem)] font-semibold text-neutral-800">张三</h2>
+            <p class="text-neutral-500 mt-1">用户ID: U20230516001</p>
+          </div>
+          <div class="flex mt-4 md:mt-0 space-x-3">
+            <button id="edit-user-btn" class="inline-flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-all-300 shadow-sm hover:shadow">
+              <i class="fa fa-pencil mr-2"></i> 编辑用户
+            </button>
+            <button class="inline-flex items-center px-4 py-2 bg-white border border-neutral-300 text-neutral-700 rounded-lg hover:bg-neutral-50 transition-all-300">
+              <i class="fa fa-ellipsis-v mr-2"></i> 更多操作
+            </button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 用户详情内容 -->
+      <div class="bg-white rounded-xl shadow-card mb-6 overflow-hidden">
+        <!-- 标签页导航 -->
+        <div class="border-b border-neutral-200">
+          <div class="flex overflow-x-auto scrollbar-hide">
+            <button class="px-6 py-4 text-sm font-medium text-primary border-b-2 border-primary">基本信息</button>
+            <button class="px-6 py-4 text-sm font-medium text-neutral-500 hover:text-neutral-700 border-b-2 border-transparent hover:border-neutral-300 transition-all-300">连接配置</button>
+            <button class="px-6 py-4 text-sm font-medium text-neutral-500 hover:text-neutral-700 border-b-2 border-transparent hover:border-neutral-300 transition-all-300">操作历史</button>
+          </div>
+        </div>
+        
+        <!-- 标签页内容 -->
+        <div class="p-6">
+          <!-- 基本信息 -->
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div>
+              <p class="text-sm text-neutral-500 mb-1">用户名</p>
+              <p class="font-medium">张三</p>
+            </div>
+            <div>
+              <p class="text-sm text-neutral-500 mb-1">邮箱</p>
+              <p class="font-medium">zhangsan@example.com</p>
+            </div>
+            <div>
+              <p class="text-sm text-neutral-500 mb-1">手机号码</p>
+              <p class="font-medium">138****5678</p>
+            </div>
+            <div>
+              <p class="text-sm text-neutral-500 mb-1">所属部门</p>
+              <p class="font-medium">技术部</p>
+            </div>
+            <div>
+              <p class="text-sm text-neutral-500 mb-1">用户状态</p>
+              <p class="font-medium"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success">
+                <i class="fa fa-check-circle mr-1"></i> 启用
+              </span></p>
+            </div>
+            <div>
+              <p class="text-sm text-neutral-500 mb-1">创建时间</p>
+              <p class="font-medium">2023-05-16 10:23:45</p>
+            </div>
+            <div>
+              <p class="text-sm text-neutral-500 mb-1">最后登录时间</p>
+              <p class="font-medium">2023-06-20 15:42:18</p>
+            </div>
+            <div>
+              <p class="text-sm text-neutral-500 mb-1">角色</p>
+              <p class="font-medium">普通用户</p>
+            </div>
+            <div>
+              <p class="text-sm text-neutral-500 mb-1">备注</p>
+              <p class="font-medium">负责华东区域系统维护</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 连接配置 -->
+      <div class="bg-white rounded-xl shadow-card mb-6 overflow-hidden">
+        <div class="p-6 border-b border-neutral-200">
+          <h3 class="text-lg font-semibold text-neutral-800">IP白名单配置</h3>
+          <p class="text-neutral-500 text-sm mt-1">管理该用户可访问系统的IP地址列表</p>
+        </div>
+        
+        <div class="p-6">
+          <!-- 操作按钮 -->
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
+            <div class="flex items-center">
+              <button id="add-ip-btn" class="inline-flex items-center px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-all-300 shadow-sm hover:shadow">
+                <i class="fa fa-plus mr-2"></i> 添加IP地址
+              </button>
+              <button class="ml-3 inline-flex items-center px-4 py-2 bg-white border border-neutral-300 text-neutral-700 rounded-lg hover:bg-neutral-50 transition-all-300">
+                <i class="fa fa-upload mr-2"></i> 批量导入
+              </button>
+            </div>
+            <div class="flex items-center space-x-3">
+              <div class="relative">
+                <input type="text" placeholder="搜索IP地址..." class="pl-10 pr-4 py-2 rounded-lg border border-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all-300 w-full sm:w-64" />
+                <i class="fa fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-neutral-400"></i>
+              </div>
+            </div>
+          </div>
+          
+          <!-- IP白名单表格 -->
+          <div class="overflow-x-auto rounded-lg border border-neutral-200">
+            <table class="min-w-full divide-y divide-neutral-200">
+              <thead class="bg-neutral-50">
+                <tr>
+                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">IP地址</th>
+                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">描述</th>
+                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">状态</th>
+                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">添加时间</th>
+                  <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-neutral-500 uppercase tracking-wider">操作</th>
+                </tr>
+              </thead>
+              <tbody class="bg-white divide-y divide-neutral-200">
+                <tr class="hover:bg-neutral-50 transition-bg">
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm font-medium text-neutral-800">192.168.1.100</div>
+                  </td>
+                  <td class="px-6 py-4">
+                    <div class="text-sm text-neutral-600">办公区主网络</div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-success/10 text-success">
+                      已生效
+                    </span>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
+                    2023-05-16 10:30:00
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <button class="text-primary hover:text-primary/80 mr-3 edit-ip-btn" data-id="1">编辑</button>
+                    <button class="text-danger hover:text-danger/80 delete-ip-btn" data-id="1">删除</button>
+                  </td>
+                </tr>
+                <tr class="hover:bg-neutral-50 transition-bg">
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm font-medium text-neutral-800">10.0.2.5</div>
+                  </td>
+                  <td class="px-6 py-4">
+                    <div class="text-sm text-neutral-600">机房服务器</div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-success/10 text-success">
+                      已生效
+                    </span>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
+                    2023-05-18 14:20:30
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <button class="text-primary hover:text-primary/80 mr-3 edit-ip-btn" data-id="2">编辑</button>
+                    <button class="text-danger hover:text-danger/80 delete-ip-btn" data-id="2">删除</button>
+                  </td>
+                </tr>
+                <tr class="hover:bg-neutral-50 transition-bg">
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm font-medium text-neutral-800">172.16.3.88</div>
+                  </td>
+                  <td class="px-6 py-4">
+                    <div class="text-sm text-neutral-600">备用网络</div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-warning/10 text-warning animate-pulse-slow">
+                      待生效
+                    </span>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
+                    2023-06-20 09:15:22
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <button class="text-primary hover:text-primary/80 mr-3 edit-ip-btn" data-id="3">编辑</button>
+                    <button class="text-danger hover:text-danger/80 delete-ip-btn" data-id="3">删除</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          
+          <!-- 分页 -->
+          <div class="flex items-center justify-between px-4 py-3 sm:px-6 mt-4">
+            <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+              <div>
+                <p class="text-sm text-neutral-700">
+                  显示第 <span class="font-medium">1</span> 至 <span class="font-medium">3</span> 条，共 <span class="font-medium">8</span> 条记录
+                </p>
+              </div>
+              <div>
+                <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                  <a href="#" class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-neutral-300 bg-white text-sm font-medium text-neutral-500 hover:bg-neutral-50">
+                    <i class="fa fa-chevron-left text-xs"></i>
+                  </a>
+                  <a href="#" aria-current="page" class="z-10 bg-primary text-white relative inline-flex items-center px-4 py-2 border border-primary text-sm font-medium">
+                    1
+                  </a>
+                  <a href="#" class="bg-white border-neutral-300 text-neutral-500 hover:bg-neutral-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">
+                    2
+                  </a>
+                  <a href="#" class="bg-white border-neutral-300 text-neutral-500 hover:bg-neutral-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">
+                    3
+                  </a>
+                  <a href="#" class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-neutral-300 bg-white text-sm font-medium text-neutral-500 hover:bg-neutral-50">
+                    <i class="fa fa-chevron-right text-xs"></i>
+                  </a>
+                </nav>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 操作历史 -->
+      <div class="bg-white rounded-xl shadow-card overflow-hidden">
+        <div class="p-6 border-b border-neutral-200">
+          <h3 class="text-lg font-semibold text-neutral-800">操作历史记录</h3>
+          <p class="text-neutral-500 text-sm mt-1">所有IP白名单的变更记录，支持回滚操作</p>
+        </div>
+        
+        <div class="p-6">
+          <!-- 筛选条件 -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div>
+              <label class="block text-sm font-medium text-neutral-700 mb-1">操作类型</label>
+              <select class="w-full rounded-lg border border-neutral-300 py-2 px-3 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all-300">
+                <option value="">全部类型</option>
+                <option value="add">新增</option>
+                <option value="edit">编辑</option>
+                <option value="delete">删除</option>
+                <option value="rollback">回滚</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-neutral-700 mb-1">操作时间</label>
+              <input type="date" class="w-full rounded-lg border border-neutral-300 py-2 px-3 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all-300" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-neutral-700 mb-1">操作人员</label>
+              <input type="text" placeholder="搜索操作人员..." class="w-full rounded-lg border border-neutral-300 py-2 px-3 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all-300" />
+            </div>
+          </div>
+          
+          <!-- 历史记录列表 -->
+          <div class="space-y-4">
+            <!-- 历史记录项 -->
+            <div class="border border-neutral-200 rounded-lg overflow-hidden">
+              <div class="bg-neutral-50 px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between">
+                <div>
+                  <div class="flex items-center">
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary mr-3">
+                      编辑
+                    </span>
+                    <span class="text-sm font-medium text-neutral-800">修改了IP白名单</span>
+                  </div>
+                  <div class="flex items-center mt-2 text-sm text-neutral-500">
+                    <span>操作人: <span class="text-neutral-700 font-medium">管理员</span></span>
+                    <span class="mx-2">•</span>
+                    <span>2023-06-20 09:15:22</span>
+                  </div>
+                </div>
+                <div class="mt-3 sm:mt-0">
+                  <button class="text-primary hover:text-primary/80 text-sm font-medium view-history-btn" data-id="101">查看详情</button>
+                </div>
+              </div>
+            </div>
+            
+            <div class="border border-neutral-200 rounded-lg overflow-hidden">
+              <div class="bg-neutral-50 px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between">
+                <div>
+                  <div class="flex items-center">
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success mr-3">
+                      新增
+                    </span>
+                    <span class="text-sm font-medium text-neutral-800">添加了IP地址 10.0.2.5</span>
+                  </div>
+                  <div class="flex items-center mt-2 text-sm text-neutral-500">
+                    <span>操作人: <span class="text-neutral-700 font-medium">管理员</span></span>
+                    <span class="mx-2">•</span>
+                    <span>2023-05-18 14:20:30</span>
+                  </div>
+                </div>
+                <div class="mt-3 sm:mt-0">
+                  <button class="text-primary hover:text-primary/80 text-sm font-medium view-history-btn" data-id="102">查看详情</button>
+                </div>
+              </div>
+            </div>
+            
+            <div class="border border-neutral-200 rounded-lg overflow-hidden">
+              <div class="bg-neutral-50 px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between">
+                <div>
+                  <div class="flex items-center">
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-success/10 text-success mr-3">
+                      新增
+                    </span>
+                    <span class="text-sm font-medium text-neutral-800">添加了IP地址 192.168.1.100</span>
+                  </div>
+                  <div class="flex items-center mt-2 text-sm text-neutral-500">
+                    <span>操作人: <span class="text-neutral-700 font-medium">系统管理员</span></span>
+                    <span class="mx-2">•</span>
+                    <span>2023-05-16 10:30:00</span>
+                  </div>
+                </div>
+                <div class="mt-3 sm:mt-0">
+                  <button class="text-primary hover:text-primary/80 text-sm font-medium view-history-btn" data-id="103">查看详情</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- 分页 -->
+          <div class="flex items-center justify-between px-4 py-3 sm:px-6 mt-6">
+            <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+              <div>
+                <p class="text-sm text-neutral-700">
+                  显示第 <span class="font-medium">1</span> 至 <span class="font-medium">3</span> 条，共 <span class="font-medium">12</span> 条记录
+                </p>
+              </div>
+              <div>
+                <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                  <a href="#" class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-neutral-300 bg-white text-sm font-medium text-neutral-500 hover:bg-neutral-50">
+                    <i class="fa fa-chevron-left text-xs"></i>
+                  </a>
+                  <a href="#" aria-current="page" class="z-10 bg-primary text-white relative inline-flex items-center px-4 py-2 border border-primary text-sm font-medium">
+                    1
+                  </a>
+                  <a href="#" class="bg-white border-neutral-300 text-neutral-500 hover:bg-neutral-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">
+                    2
+                  </a>
+                  <a href="#" class="bg-white border-neutral-300 text-neutral-500 hover:bg-neutral-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">
+                    3
+                  </a>
+                  <a href="#" class="bg-white border-neutral-300 text-neutral-500 hover:bg-neutral-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium">
+                    4
+                  </a>
+                  <a href="#" class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-neutral-300 bg-white text-sm font-medium text-neutral-500 hover:bg-neutral-50">
+                    <i class="fa fa-chevron-right text-xs"></i>
+                  </a>
+                </nav>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+  
+  <!-- 添加/编辑IP地址模态框 -->
+  <div id="ip-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-dropdown w-full max-w-md transform transition-all-300 scale-95 opacity-0" id="modal-content">
+      <div class="p-6 border-b border-neutral-200">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-neutral-800" id="modal-title">添加IP地址</h3>
+          <button id="close-modal" class="text-neutral-500 hover:text-neutral-700">
+            <i class="fa fa-times"></i>
+          </button>
+        </div>
+      </div>
+      
+      <div class="p-6">
+        <form id="ip-form">
+          <input type="hidden" id="ip-id" value="" />
+          
+          <div class="mb-4">
+            <label for="ip-address" class="block text-sm font-medium text-neutral-700 mb-1">IP地址 <span class="text-danger">*</span></label>
+            <input type="text" id="ip-address" name="ip-address" placeholder="例如: 192.168.1.100" class="w-full rounded-lg border border-neutral-300 py-2 px-3 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all-300" required />
+            <p class="mt-1 text-xs text-neutral-500">请输入有效的IPv4地址</p>
+          </div>
+          
+          <div class="mb-4">
+            <label for="ip-description" class="block text-sm font-medium text-neutral-700 mb-1">描述</label>
+            <textarea id="ip-description" name="ip-description" rows="3" placeholder="请输入该IP地址的描述信息" class="w-full rounded-lg border border-neutral-300 py-2 px-3 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-all-300"></textarea>
+          </div>
+        </form>
+      </div>
+      
+      <div class="px-6 py-4 bg-neutral-50 rounded-b-xl flex justify-end space-x-3">
+        <button id="cancel-ip" class="px-4 py-2 border border-neutral-300 rounded-lg text-neutral-700 hover:bg-neutral-100 transition-all-300">取消</button>
+        <button id="save-ip" class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-all-300 shadow-sm hover:shadow">保存并生效</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- 历史详情模态框 -->
+  <div id="history-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-dropdown w-full max-w-2xl max-h-[80vh] flex flex-col transform transition-all-300 scale-95 opacity-0" id="history-modal-content">
+      <div class="p-6 border-b border-neutral-200">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-neutral-800">操作历史详情</h3>
+          <button id="close-history-modal" class="text-neutral-500 hover:text-neutral-700">
+            <i class="fa fa-times"></i>
+          </button>
+        </div>
+      </div>
+      
+      <div class="p-6 flex-1 overflow-y-auto">
+        <div class="mb-6">
+          <div class="flex items-center mb-4">
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary mr-3">
+              编辑
+            </span>
+            <span class="text-sm font-medium text-neutral-800">修改了IP白名单</span>
+          </div>
+          
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div>
+              <p class="text-xs text-neutral-500">操作人</p>
+              <p class="text-sm font-medium">管理员</p>
+            </div>
+            <div>
+              <p class="text-xs text-neutral-500">操作时间</p>
+              <p class="text-sm font-medium">2023-06-20 09:15:22</p>
+            </div>
+            <div>
+              <p class="text-xs text-neutral-500">操作状态</p>
+              <p class="text-sm font-medium text-success"><i class="fa fa-check-circle mr-1"></i> 成功</p>
+            </div>
+          </div>
+          
+          <div>
+            <p class="text-sm font-medium text-neutral-800 mb-3">变更详情</p>
+            <div class="bg-neutral-50 rounded-lg p-4">
+              <div class="mb-4 pb-4 border-b border-neutral-200">
+                <p class="text-sm text-neutral-600 mb-2"><span class="text-success"><i class="fa fa-plus-circle mr-1"></i> 新增IP:</span> 172.16.3.88</p>
+                <div class="pl-6 text-xs text-neutral-500">
+                  <p>描述: 备用网络</p>
+                </div>
+              </div>
+              
+              <div class="mb-4 pb-4 border-b border-neutral-200">
+                <p class="text-sm text-neutral-600 mb-2"><span class="text-danger"><i class="fa fa-minus-circle mr-1"></i> 删除IP:</span> 192.168.1.101</p>
+                <div class="pl-6 text-xs text-neutral-500">
+                  <p>描述: 旧办公网络</p>
+                </div>
+              </div>
+              
+              <div>
+                <p class="text-sm text-neutral-600 mb-2"><span class="text-primary"><i class="fa fa-pencil mr-1"></i> 修改IP:</span> 10.0.2.5</p>
+                <div class="pl-6 text-xs text-neutral-500 space-y-2">
+                  <div>
+                    <p class="font-medium">描述</p>
+                    <p class="line-through text-danger">机房备用服务器</p>
+                    <p class="text-success">机房服务器</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div>
+          <p class="text-sm font-medium text-neutral-800 mb-3">系统操作记录</p>
+          <div class="bg-neutral-50 rounded-lg p-4">
+            <ul class="space-y-3 text-sm">
+              <li class="flex">
+                <div class="flex-shrink-0 mt-0.5">
+                  <div class="w-2 h-2 rounded-full bg-primary mt-1.5"></div>
+                </div>
+                <div class="ml-3">
+                  <p class="text-neutral-700">保存至MongoDB成功</p>
+                  <p class="text-xs text-neutral-500 mt-0.5">2023-06-20 09:15:23</p>
+                </div>
+              </li>
+              <li class="flex">
+                <div class="flex-shrink-0 mt-0.5">
+                  <div class="w-2 h-2 rounded-full bg-primary mt-1.5"></div>
+                </div>
+                <div class="ml-3">
+                  <p class="text-neutral-700">调用接口使其生效成功</p>
+                  <p class="text-xs text-neutral-500 mt-0.5">2023-06-20 09:15:25</p>
+                </div>
+              </li>
+              <li class="flex">
+                <div class="flex-shrink-0 mt-0.5">
+                  <div class="w-2 h-2 rounded-full bg-success mt-1.5"></div>
+                </div>
+                <div class="ml-3">
+                  <p class="text-neutral-700">操作完成，状态已更新</p>
+                  <p class="text-xs text-neutral-500 mt-0.5">2023-06-20 09:15:26</p>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      
+      <div class="px-6 py-4 bg-neutral-50 rounded-b-xl flex justify-end space-x-3">
+        <button id="cancel-history" class="px-4 py-2 border border-neutral-300 rounded-lg text-neutral-700 hover:bg-neutral-100 transition-all-300">关闭</button>
+        <button id="rollback-history" class="px-4 py-2 bg-danger text-white rounded-lg hover:bg-danger/90 transition-all-300 shadow-sm hover:shadow">回滚到此版本</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- 回滚确认模态框 -->
+  <div id="rollback-confirm-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-dropdown w-full max-w-md transform transition-all-300 scale-95 opacity-0" id="rollback-confirm-content">
+      <div class="p-6 border-b border-neutral-200">
+        <div class="flex items-center">
+          <div class="w-10 h-10 rounded-full bg-warning/10 flex items-center justify-center mr-3">
+            <i class="fa fa-exclamation-triangle text-warning text-xl"></i>
+          </div>
+          <h3 class="text-lg font-semibold text-neutral-800">确认回滚</h3>
+        </div>
+      </div>
+      
+      <div class="p-6">
+        <p class="text-neutral-700 mb-4">您确定要回滚到该版本的IP白名单配置吗？</p>
+        <div class="bg-neutral-50 rounded-lg p-4 text-sm text-neutral-600">
+          <p class="mb-2"><i class="fa fa-info-circle text-primary mr-2"></i> 回滚操作将：</p>
+          <ul class="list-disc pl-5 space-y-1">
+            <li>覆盖当前的IP白名单配置</li>
+            <li>保存新的历史记录</li>
+            <li>自动调用接口使其生效</li>
+          </ul>
+        </div>
+      </div>
+      
+      <div class="px-6 py-4 bg-neutral-50 rounded-b-xl flex justify-end space-x-3">
+        <button id="cancel-rollback" class="px-4 py-2 border border-neutral-300 rounded-lg text-neutral-700 hover:bg-neutral-100 transition-all-300">取消</button>
+        <button id="confirm-rollback" class="px-4 py-2 bg-danger text-white rounded-lg hover:bg-danger/90 transition-all-300 shadow-sm hover:shadow">确认回滚</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- 保存成功提示 -->
+  <div id="success-toast" class="fixed bottom-6 right-6 bg-success text-white px-6 py-3 rounded-lg shadow-lg transform translate-y-20 opacity-0 transition-all-300 flex items-center z-50">
+    <i class="fa fa-check-circle mr-2"></i>
+    <span id="success-message">操作成功</span>
+  </div>
+  
+  <!-- JavaScript -->
+  <script>
+    // 侧边栏切换
+    document.getElementById('sidebar-toggle').addEventListener('click', function() {
+      const sidebar = document.getElementById('sidebar');
+      sidebar.classList.toggle('-translate-x-full');
+    });
+    
+    // 模态框操作
+    const ipModal = document.getElementById('ip-modal');
+    const modalContent = document.getElementById('modal-content');
+    const modalTitle = document.getElementById('modal-title');
+    const ipForm = document.getElementById('ip-form');
+    const ipId = document.getElementById('ip-id');
+    const ipAddress = document.getElementById('ip-address');
+    const ipDescription = document.getElementById('ip-description');
+    const successToast = document.getElementById('success-toast');
+    const successMessage = document.getElementById('success-message');
+    
+    // 打开添加IP模态框
+    document.getElementById('add-ip-btn').addEventListener('click', function() {
+      modalTitle.textContent = '添加IP地址';
+      ipForm.reset();
+      ipId.value = '';
+      openModal(ipModal, modalContent);
+    });
+    
+    // 打开编辑IP模态框
+    document.querySelectorAll('.edit-ip-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const id = this.getAttribute('data-id');
+        // 模拟获取数据
+        let ip, desc;
+        if (id === '1') {
+          ip = '192.168.1.100';
+          desc = '办公区主网络';
+        } else if (id === '2') {
+          ip = '10.0.2.5';
+          desc = '机房服务器';
+        } else {
+          ip = '172.16.3.88';
+          desc = '备用网络';
+        }
+        
+        modalTitle.textContent = '编辑IP地址';
+        ipId.value = id;
+        ipAddress.value = ip;
+        ipDescription.value = desc;
+        openModal(ipModal, modalContent);
+      });
+    });
+    
+    // 关闭模态框
+    document.getElementById('close-modal').addEventListener('click', function() {
+      closeModal(ipModal, modalContent);
+    });
+    
+    document.getElementById('cancel-ip').addEventListener('click', function() {
+      closeModal(ipModal, modalContent);
+    });
+    
+    // 保存IP地址
+    document.getElementById('save-ip').addEventListener('click', function() {
+      // 模拟表单验证
+      if (!ipAddress.value) {
+        alert('请输入IP地址');
+        return;
+      }
+      
+      // 模拟IP地址格式验证
+      const ipRegex = /^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$/;
+      if (!ipRegex.test(ipAddress.value)) {
+        alert('请输入有效的IP地址');
+        return;
+      }
+      
+      // 模拟保存操作
+      const isEdit = !!ipId.value;
+      
+      // 显示保存中状态
+      this.innerHTML = '<i class="fa fa-spinner fa-spin mr-2"></i> 保存中...';
+      this.disabled = true;
+      
+      // 模拟异步操作
+      setTimeout(() => {
+        // 模拟第一步：保存到MongoDB
+        this.innerHTML = '<i class="fa fa-spinner fa-spin mr-2"></i> 正在生效...';
+        
+        // 模拟第二步：调用接口生效
+        setTimeout(() => {
+          this.innerHTML = '保存并生效';
+          this.disabled = false;
+          
+          // 关闭模态框
+          closeModal(ipModal, modalContent);
+          
+          // 显示成功提示
+          showSuccessToast(isEdit ? 'IP地址更新成功' : 'IP地址添加成功');
+        }, 1500);
+      }, 1000);
+    });
+    
+    // 删除IP地址
+    document.querySelectorAll('.delete-ip-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const id = this.getAttribute('data-id');
+        if (confirm('确定要删除该IP地址吗？')) {
+          // 模拟删除操作
+          showSuccessToast('IP地址已删除');
+        }
+      });
+    });
+    
+    // 历史记录详情
+    const historyModal = document.getElementById('history-modal');
+    const historyModalContent = document.getElementById('history-modal-content');
+    
+    document.querySelectorAll('.view-history-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        openModal(historyModal, historyModalContent);
+      });
+    });
+    
+    document.getElementById('close-history-modal').addEventListener('click', function() {
+      closeModal(historyModal, historyModalContent);
+    });
+    
+    document.getElementById('cancel-history').addEventListener('click', function() {
+      closeModal(historyModal, historyModalContent);
+    });
+    
+    // 回滚操作
+    const rollbackConfirmModal = document.getElementById('rollback-confirm-modal');
+    const rollbackConfirmContent = document.getElementById('rollback-confirm-content');
+    
+    document.getElementById('rollback-history').addEventListener('click', function() {
+      closeModal(historyModal, historyModalContent);
+      openModal(rollbackConfirmModal, rollbackConfirmContent);
+    });
+    
+    document.getElementById('cancel-rollback').addEventListener('click', function() {
+      closeModal(rollbackConfirmModal, rollbackConfirmContent);
+    });
+    
+    document.getElementById('confirm-rollback').addEventListener('click', function() {
+      // 模拟回滚操作
+      this.innerHTML = '<i class="fa fa-spinner fa-spin mr-2"></i> 回滚中...';
+      this.disabled = true;
+      
+      setTimeout(() => {
+        closeModal(rollbackConfirmModal, rollbackConfirmContent);
+        showSuccessToast('回滚操作已完成');
+      }, 2000);
+    });
+    
+    // 模态框动画函数
+    function openModal(modal, content) {
+      modal.classList.remove('hidden');
+      // 触发重排后添加动画类
+      setTimeout(() => {
+        content.classList.remove('scale-95', 'opacity-0');
+        content.classList.add('scale-100', 'opacity-100');
+      }, 10);
+      // 阻止背景滚动
+      document.body.style.overflow = 'hidden';
+    }
+    
+    function closeModal(modal, content) {
+      content.classList.remove('scale-100', 'opacity-100');
+      content.classList.add('scale-95', 'opacity-0');
+      // 动画结束后隐藏模态框
+      setTimeout(() => {
+        modal.classList.add('hidden');
+        // 恢复背景滚动
+        document.body.style.overflow = '';
+      }, 300);
+    }
+    
+    // 成功提示动画
+    function showSuccessToast(message) {
+      successMessage.textContent = message;
+      successToast.classList.remove('translate-y-20', 'opacity-0');
+      successToast.classList.add('translate-y-0', 'opacity-100');
+      
+      setTimeout(() => {
+        successToast.classList.remove('translate-y-0', 'opacity-100');
+        successToast.classList.add('translate-y-20', 'opacity-0');
+      }, 3000);
+    }
+    
+    // 点击模态框外部关闭
+    ipModal.addEventListener('click', function(e) {
+      if (e.target === ipModal) {
+        closeModal(ipModal, modalContent);
+      }
+    });
+    
+    historyModal.addEventListener('click', function(e) {
+      if (e.target === historyModal) {
+        closeModal(historyModal, historyModalContent);
+      }
+    });
+    
+    rollbackConfirmModal.addEventListener('click', function(e) {
+      if (e.target === rollbackConfirmModal) {
+        closeModal(rollbackConfirmModal, rollbackConfirmContent);
+      }
+    });
+  </script>
+</body>
+</html>
