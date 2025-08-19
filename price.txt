@@ -1,0 +1,698 @@
+public class MarketData {
+    private String symbol;
+    private double bid;
+    private double ask;
+    private int bidSize;
+    private int askSize;
+    private String updateTime;
+
+    // Getters and Setters
+}
+
+import quickfix.*;
+import quickfix.fix44.*;
+import quickfix.field.*;
+
+public class FixMarketDataHandler extends MessageCracker {
+
+    private final DataSourceService dataSource;
+
+    public FixMarketDataHandler(DataSourceService dataSource) {
+        this.dataSource = dataSource;
+    }
+
+    @Override
+    public void onMessage(MarketDataRequest request, SessionID sessionID) {
+        try {
+            // 1. 解析客户端请求
+            MDReqID mdReqID = new MDReqID();
+            Symbol symbol = new Symbol();
+            SubscriptionRequestType subType = new SubscriptionRequestType();
+            MarketDepth marketDepth = new MarketDepth();
+            
+            request.get(mdReqID);
+            request.get(symbol);
+            request.get(subType);
+            request.get(marketDepth);
+
+            // 2. 获取市场数据
+            MarketData marketData = dataSource.getMarketData(symbol.getValue());
+
+            // 3. 构建FIX响应
+            MarketDataSnapshotFullRefresh fixMessage = createFixSnapshot(
+                mdReqID.getValue(), 
+                symbol.getValue(), 
+                marketData
+            );
+
+            // 4. 发送响应
+            Session.sendToTarget(fixMessage, sessionID);
+            
+        } catch (FieldNotFound | DataSourceException e) {
+            logError("Market data processing failed", e);
+        }
+    }
+
+    private MarketDataSnapshotFullRefresh createFixSnapshot(
+        String reqId, String symbol, MarketData data) {
+        
+        MarketDataSnapshotFullRefresh message = new MarketDataSnapshotFullRefresh(
+            new MDReqID(reqId),
+            new Symbol(symbol)
+        );
+
+        // 添加BID条目
+        MarketDataSnapshotFullRefresh.NoMDEntries bidEntry = 
+            new MarketDataSnapshotFullRefresh.NoMDEntries();
+        bidEntry.set(new MDEntryType(MDEntryType.BID));
+        bidEntry.set(new MDEntryPx(data.getBid()));
+        bidEntry.set(new MDEntrySize(data.getBidSize()));
+        bidEntry.set(new MDEntryDate(LocalDate.now().toString()));
+        bidEntry.set(new MDEntryTime(LocalTime.now().toString()));
+        message.addGroup(bidEntry);
+
+        // 添加ASK条目
+        MarketDataSnapshotFullRefresh.NoMDEntries askEntry = 
+            new MarketDataSnapshotFullRefresh.NoMDEntries();
+        askEntry.set(new MDEntryType(MDEntryType.OFFER));
+        askEntry.set(new MDEntryPx(data.getAsk()));
+        askEntry.set(new MDEntrySize(data.getAskSize()));
+        askEntry.set(new MDEntryDate(LocalDate.now().toString()));
+        askEntry.set(new MDEntryTime(LocalTime.now().toString()));
+        message.addGroup(askEntry);
+
+        return message;
+    }
+}
+
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+public class DataSourceService {
+    private final ObjectMapper mapper = new ObjectMapper();
+    
+    public MarketData getMarketData(String symbol) throws DataSourceException {
+        try {
+            // 模拟从外部系统获取JSON数据
+            String json = fetchMarketDataFromSource(symbol);
+            return mapper.readValue(json, MarketData.class);
+        } catch (Exception e) {
+            throw new DataSourceException("Failed to fetch data for " + symbol, e);
+        }
+    }
+    
+    private String fetchMarketDataFromSource(String symbol) {
+        // 实际场景替换为真实数据源调用
+        return String.format("""
+            {
+                "symbol": "%s",
+                "bid": 1.18025,
+                "ask": 1.18045,
+                "bidSize": 2500000,
+                "askSize": 3500000,
+                "updateTime": "2025-08-19T10:15:30Z"
+            }""", symbol);
+    }
+}
+
+
+
+
+import com.google.gson.Gson;
+import quickfix.field.*;
+import quickfix.fix44.MarketDataSnapshotFullRefresh;
+
+// JSON格式转换为FIX格式的转换器
+public class FixMessageConverter {
+    private final Gson gson = new Gson();
+    
+    // 将JSON数据转换为FIX消息
+    public MarketDataSnapshotFullRefresh convertJsonToFix(String jsonData, String symbol) {
+        // 解析JSON数据
+        MarketDataProvider.MarketData data = gson.fromJson(jsonData, MarketDataProvider.MarketData.class);
+        
+        // 创建FIX市场数据快照消息
+        MarketDataSnapshotFullRefresh message = new MarketDataSnapshotFullRefresh();
+        
+        // 设置消息头字段
+        message.set(new Symbol(symbol));
+        message.set(new TransactTime());
+        
+        // 添加市场数据条目
+        MarketDataSnapshotFullRefresh.NoMDEntries bidEntry = new MarketDataSnapshotFullRefresh.NoMDEntries();
+        bidEntry.set(new MDEntryType(MDEntryType.BID));
+        bidEntry.set(new MDEntryPx(data.getBidPrice()));
+        bidEntry.set(new MDEntrySize(data.getBidSize()));
+        bidEntry.set(new MDEntryDate());
+        bidEntry.set(new MDEntryTime());
+        message.addGroup(bidEntry);
+        
+        MarketDataSnapshotFullRefresh.NoMDEntries askEntry = new MarketDataSnapshotFullRefresh.NoMDEntries();
+        askEntry.set(new MDEntryType(MDEntryType.OFFER));
+        askEntry.set(new MDEntryPx(data.getAskPrice()));
+        askEntry.set(new MDEntrySize(data.getAskSize()));
+        askEntry.set(new MDEntryDate());
+        askEntry.set(new MDEntryTime());
+        message.addGroup(askEntry);
+        
+        // 添加最后成交价格
+        MarketDataSnapshotFullRefresh.NoMDEntries lastEntry = new MarketDataSnapshotFullRefresh.NoMDEntries();
+        lastEntry.set(new MDEntryType(MDEntryType.TRADE));
+        lastEntry.set(new MDEntryPx(data.getLastPrice()));
+        lastEntry.set(new MDEntryDate());
+        lastEntry.set(new MDEntryTime());
+        message.addGroup(lastEntry);
+        
+        return message;
+    }
+}
+
+
+import quickfix.*;
+import quickfix.field.*;
+import quickfix.fix44.MarketDataRequest;
+import quickfix.fix44.MarketDataSnapshotFullRefresh;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+
+public class MarketDataEngine {
+    private static final String CONFIG_FILE = "fix-engine.cfg";
+    
+    public static void main(String[] args) throws Exception {
+        SessionSettings settings = new SessionSettings(new FileInputStream(CONFIG_FILE));
+        Application application = new MarketDataApplication();
+        MessageStoreFactory storeFactory = new FileStoreFactory(settings);
+        LogFactory logFactory = new FileLogFactory(settings);
+        MessageFactory messageFactory = new DefaultMessageFactory();
+        
+        Acceptor acceptor = new SocketAcceptor(
+            application, storeFactory, settings, logFactory, messageFactory);
+        
+        acceptor.start();
+        System.out.println("FIX Market Data Engine started...");
+        
+        // 保持引擎运行
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            acceptor.stop();
+            System.out.println("FIX Market Data Engine stopped.");
+        }));
+        
+        synchronized (MarketDataEngine.class) {
+            MarketDataEngine.class.wait();
+        }
+    }
+}
+
+// 实现FIX应用接口
+class MarketDataApplication implements Application {
+    private final MarketDataProvider dataProvider = new MarketDataProvider();
+    private final FixMessageConverter messageConverter = new FixMessageConverter();
+    
+    @Override
+    public void onCreate(SessionID sessionID) {}
+    
+    @Override
+    public void onLogon(SessionID sessionID) {
+        System.out.println("Client logged on: " + sessionID);
+    }
+    
+    @Override
+    public void onLogout(SessionID sessionID) {
+        System.out.println("Client logged out: " + sessionID);
+    }
+    
+    @Override
+    public void toAdmin(Message message, SessionID sessionID) {}
+    
+    @Override
+    public void fromAdmin(Message message, SessionID sessionID) throws FieldNotFound, IncorrectDataFormat, IncorrectTagValue, RejectLogon {}
+    
+    @Override
+    public void toApp(Message message, SessionID sessionID) throws DoNotSend {}
+    
+    @Override
+    public void fromApp(Message message, SessionID sessionID) throws FieldNotFound, IncorrectDataFormat, IncorrectTagValue, UnsupportedMessageType {
+        // 处理来自客户端的消息
+        if (message instanceof MarketDataRequest) {
+            handleMarketDataRequest((MarketDataRequest) message, sessionID);
+        }
+    }
+    
+    // 处理市场数据请求
+    private void handleMarketDataRequest(MarketDataRequest request, SessionID sessionID) {
+        try {
+            // 提取请求的工具代码
+            MarketDataRequest.NoRelatedSym noRelatedSym = new MarketDataRequest.NoRelatedSym();
+            request.get(noRelatedSym);
+            String symbol = noRelatedSym.getSymbol().getValue();
+            
+            System.out.println("Received market data request for: " + symbol);
+            
+            // 从数据源获取JSON格式数据
+            String jsonData = dataProvider.getMarketData(symbol);
+            
+            // 将JSON转换为FIX消息
+            MarketDataSnapshotFullRefresh fixMessage = messageConverter.convertJsonToFix(jsonData, symbol);
+            
+            // 发送响应给客户端
+            Session.sendToTarget(fixMessage, sessionID);
+            System.out.println("Sent market data for: " + symbol);
+        } catch (Exception e) {
+            System.err.println("Error handling market data request: " + e.getMessage());
+        }
+    }
+}
+
+
+import com.google.gson.Gson;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Random;
+
+// 市场数据提供器，模拟从数据源获取JSON格式数据
+public class MarketDataProvider {
+    private final Gson gson = new Gson();
+    private final Random random = new Random();
+    
+    // 模拟从数据源获取JSON格式的市场数据
+    public String getMarketData(String symbol) {
+        // 模拟实时数据，实际应用中可能是从数据库或外部API获取
+        MarketData data = new MarketData();
+        data.setSymbol(symbol);
+        data.setBidPrice(generateRandomPrice());
+        data.setAskPrice(data.getBidPrice() + 0.01); // 卖价通常高于买价
+        data.setBidSize(100 + random.nextInt(900));
+        data.setAskSize(100 + random.nextInt(900));
+        data.setLastPrice(generateRandomPrice());
+        data.setTimestamp(System.currentTimeMillis());
+        
+        // 转换为JSON字符串
+        return gson.toJson(data);
+    }
+    
+    private double generateRandomPrice() {
+        // 生成一个随机价格，范围在10到200之间
+        return 10 + (200 - 10) * random.nextDouble();
+    }
+    
+    // 市场数据模型类
+    public static class MarketData {
+        private String symbol;
+        private double bidPrice;
+        private double askPrice;
+        private int bidSize;
+        private int askSize;
+        private double lastPrice;
+        private long timestamp;
+        
+        // Getters and Setters
+        public String getSymbol() { return symbol; }
+        public void setSymbol(String symbol) { this.symbol = symbol; }
+        public double getBidPrice() { return bidPrice; }
+        public void setBidPrice(double bidPrice) { this.bidPrice = bidPrice; }
+        public double getAskPrice() { return askPrice; }
+        public void setAskPrice(double askPrice) { this.askPrice = askPrice; }
+        public int getBidSize() { return bidSize; }
+        public void setBidSize(int bidSize) { this.bidSize = bidSize; }
+        public int getAskSize() { return askSize; }
+        public void setAskSize(int askSize) { this.askSize = askSize; }
+        public double getLastPrice() { return lastPrice; }
+        public void setLastPrice(double lastPrice) { this.lastPrice = lastPrice; }
+        public long getTimestamp() { return timestamp; }
+        public void setTimestamp(long timestamp) { this.timestamp = timestamp; }
+    }
+}
+
+
+import quickfix.*;
+import quickfix.field.*;
+import quickfix.fix44.MarketDataSnapshotFullRefresh;
+import java.util.Collection;
+
+/**
+ * FIX市场数据处理器，负责将市场数据转换为FIX格式并发送
+ */
+public class FixMarketDataHandler {
+    private final SessionID sessionId;
+    private final MarketDataFetcher dataFetcher;
+    
+    public FixMarketDataHandler(SessionID sessionId, MarketDataFetcher dataFetcher) {
+        this.sessionId = sessionId;
+        this.dataFetcher = dataFetcher;
+    }
+    
+    /**
+     * 处理全市场数据请求
+     */
+    public void handleAllMarketDataRequest() throws SessionNotFound, FieldNotFound {
+        Collection<MarketData> allData = dataFetcher.getAllMarketData();
+        
+        // 按工具类型分组发送，避免单条消息过大
+        sendMarketDataByType("STOCK");
+        sendMarketDataByType("FUTURES");
+        sendMarketDataByType("FOREX");
+    }
+    
+    /**
+     * 按工具类型发送市场数据
+     */
+    private void sendMarketDataByType(String instrumentType) throws SessionNotFound {
+        Collection<MarketData> dataList = dataFetcher.getMarketDataByType(instrumentType);
+        
+        if (dataList.isEmpty()) {
+            return;
+        }
+        
+        // 创建FIX市场数据快照消息
+        MarketDataSnapshotFullRefresh snapshot = new MarketDataSnapshotFullRefresh();
+        snapshot.set(new Symbol(instrumentType + "_ALL"));
+        snapshot.set(new MDReqID(UUID.randomUUID().toString()));
+        
+        // 添加所有该类型的市场数据
+        int count = 1;
+        for (MarketData data : dataList) {
+            MarketDataSnapshotFullRefresh.NoMDEntries group = new MarketDataSnapshotFullRefresh.NoMDEntries();
+            
+            // 设置基本字段
+            group.set(new MDEntryType(MDEntryType.BID));
+            group.set(new Symbol(data.getInstrumentId()));
+            group.set(new MDEntryPrice(data.getLastPrice()));
+            group.set(new MDEntrySize(data.getVolume()));
+            group.set(new MDEntryDate(new Date(data.getUpdateTime())));
+            group.set(new MDEntryTime(new Time(data.getUpdateTime())));
+            
+            // 添加到消息中
+            snapshot.addGroup(group);
+            
+            // 每50条数据发送一次，避免消息过大
+            if (count % 50 == 0) {
+                Session.sendToTarget(snapshot, sessionId);
+                snapshot = createNewSnapshot(instrumentType);
+            }
+            count++;
+        }
+        
+        // 发送剩余数据
+        if (count > 1) {
+            Session.sendToTarget(snapshot, sessionId);
+        }
+    }
+    
+    /**
+     * 创建新的市场数据快照消息
+     */
+    private MarketDataSnapshotFullRefresh createNewSnapshot(String instrumentType) {
+        MarketDataSnapshotFullRefresh snapshot = new MarketDataSnapshotFullRefresh();
+        snapshot.set(new Symbol(instrumentType + "_ALL"));
+        snapshot.set(new MDReqID(UUID.randomUUID().toString()));
+        return snapshot;
+    }
+}
+    
+
+/**
+ * 市场数据模型类
+ */
+public class MarketData {
+    private String instrumentId;      // 工具ID
+    private String instrumentType;    // 工具类型(股票、期货、外汇等)
+    private double lastPrice;         // 最新价格
+    private long volume;              // 成交量
+    private double change;            // 涨跌幅
+    private long updateTime;          // 更新时间戳
+    
+    // Getters and Setters
+    public String getInstrumentId() {
+        return instrumentId;
+    }
+    
+    public void setInstrumentId(String instrumentId) {
+        this.instrumentId = instrumentId;
+    }
+    
+    public String getInstrumentType() {
+        return instrumentType;
+    }
+    
+    public void setInstrumentType(String instrumentType) {
+        this.instrumentType = instrumentType;
+    }
+    
+    public double getLastPrice() {
+        return lastPrice;
+    }
+    
+    public void setLastPrice(double lastPrice) {
+        this.lastPrice = lastPrice;
+    }
+    
+    public long getVolume() {
+        return volume;
+    }
+    
+    public void setVolume(long volume) {
+        this.volume = volume;
+    }
+    
+    public double getChange() {
+        return change;
+    }
+    
+    public void setChange(double change) {
+        this.change = change;
+    }
+    
+    public long getUpdateTime() {
+        return updateTime;
+    }
+    
+    public void setUpdateTime(long updateTime) {
+        this.updateTime = updateTime;
+    }
+}
+    
+import com.google.gson.Gson;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.stream.Collectors;
+
+/**
+ * 全市场数据获取器，整合多个数据源的市场数据
+ */
+public class MarketDataFetcher {
+    // 数据源集合
+    private final List<MarketDataSource> dataSources;
+    
+    // 本地缓存，存储全市场数据
+    private final ConcurrentHashMap<String, MarketData> marketDataCache;
+    
+    // 定时更新服务
+    private final ScheduledExecutorService scheduler;
+    
+    // JSON解析器
+    private final Gson gson = new Gson();
+
+    public MarketDataFetcher() {
+        this.dataSources = new ArrayList<>();
+        this.marketDataCache = new ConcurrentHashMap<>();
+        this.scheduler = Executors.newScheduledThreadPool(3);
+        
+        // 初始化数据源
+        initDataSources();
+        
+        // 启动定时更新
+        startPeriodicUpdate();
+    }
+    
+    /**
+     * 初始化数据源
+     */
+    private void initDataSources() {
+        // 添加股票数据源
+        dataSources.add(new StockDataSource());
+        // 添加期货数据源
+        dataSources.add(new FuturesDataSource());
+        // 添加外汇数据源
+        dataSources.add(new ForexDataSource());
+        // 可以添加更多数据源...
+    }
+    
+    /**
+     * 启动定时更新任务
+     */
+    private void startPeriodicUpdate() {
+        // 每5秒全量更新一次
+        scheduler.scheduleAtFixedRate(this::fetchAllMarketData, 
+                                    0, 5, TimeUnit.SECONDS);
+        
+        // 每1秒增量更新一次
+        scheduler.scheduleAtFixedRate(this::fetchIncrementalUpdates, 
+                                    2, 1, TimeUnit.SECONDS);
+    }
+    
+    /**
+     * 全量获取所有市场数据
+     */
+    public synchronized void fetchAllMarketData() {
+        try {
+            // 从所有数据源并行获取数据
+            List<CompletableFuture<Void>> futures = dataSources.stream()
+                .map(source -> CompletableFuture.runAsync(() -> {
+                    List<String> jsonDataList = source.fetchAllData();
+                    for (String json : jsonDataList) {
+                        MarketData data = gson.fromJson(json, MarketData.class);
+                        if (data != null && data.getInstrumentId() != null) {
+                            marketDataCache.put(data.getInstrumentId(), data);
+                        }
+                    }
+                })).collect(Collectors.toList());
+            
+            // 等待所有数据源完成
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get();
+            System.out.println("全量更新完成，当前市场数据总数: " + marketDataCache.size());
+        } catch (Exception e) {
+            System.err.println("全量获取市场数据失败: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 获取增量更新
+     */
+    public void fetchIncrementalUpdates() {
+        try {
+            dataSources.forEach(source -> {
+                List<String> updates = source.fetchUpdates();
+                for (String json : updates) {
+                    MarketData data = gson.fromJson(json, MarketData.class);
+                    if (data != null && data.getInstrumentId() != null) {
+                        marketDataCache.put(data.getInstrumentId(), data);
+                    }
+                }
+            });
+        } catch (Exception e) {
+            System.err.println("获取增量更新失败: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 获取所有市场数据
+     */
+    public Collection<MarketData> getAllMarketData() {
+        return new ArrayList<>(marketDataCache.values());
+    }
+    
+    /**
+     * 根据工具类型获取市场数据
+     */
+    public List<MarketData> getMarketDataByType(String instrumentType) {
+        return marketDataCache.values().stream()
+            .filter(data -> instrumentType.equals(data.getInstrumentType()))
+            .collect(Collectors.toList());
+    }
+    
+    /**
+     * 关闭资源
+     */
+    public void shutdown() {
+        scheduler.shutdown();
+        try {
+            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                scheduler.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            scheduler.shutdownNow();
+        }
+    }
+}
+    
+import java.util.List;
+
+/**
+ * 市场数据源接口，定义数据获取规范
+ */
+public interface MarketDataSource {
+    
+    /**
+     * 获取该数据源的所有市场数据
+     * @return JSON格式的数据列表
+     */
+    List<String> fetchAllData();
+    
+    /**
+     * 获取该数据源的增量更新数据
+     * @return JSON格式的更新数据列表
+     */
+    List<String> fetchUpdates();
+    
+    /**
+     * 获取数据源类型
+     */
+    String getSourceType();
+}
+    
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+import java.util.UUID;
+
+/**
+ * 股票数据源实现
+ */
+public class StockDataSource implements MarketDataSource {
+    private final Random random = new Random();
+    private long lastUpdateTimestamp = System.currentTimeMillis();
+    
+    @Override
+    public List<String> fetchAllData() {
+        List<String> stockData = new ArrayList<>();
+        
+        // 模拟100支股票数据
+        for (int i = 1; i <= 100; i++) {
+            String instrumentId = "STK" + String.format("%04d", i);
+            stockData.add(generateStockJson(instrumentId));
+        }
+        
+        return stockData;
+    }
+    
+    @Override
+    public List<String> fetchUpdates() {
+        List<String> updates = new ArrayList<>();
+        long currentTime = System.currentTimeMillis();
+        
+        // 模拟随机更新部分股票数据（5%的概率）
+        if (currentTime - lastUpdateTimestamp > 1000) {
+            int updateCount = random.nextInt(5) + 1; // 1-5条更新
+            for (int i = 0; i < updateCount; i++) {
+                String instrumentId = "STK" + String.format("%04d", random.nextInt(100) + 1);
+                updates.add(generateStockJson(instrumentId));
+            }
+            lastUpdateTimestamp = currentTime;
+        }
+        
+        return updates;
+    }
+    
+    @Override
+    public String getSourceType() {
+        return "STOCK";
+    }
+    
+    /**
+     * 生成股票数据的JSON字符串
+     */
+    private String generateStockJson(String instrumentId) {
+        double price = 100 + random.nextDouble() * 150; // 100-250之间的随机价格
+        long volume = random.nextLong(1000000) + 100000; // 成交量
+        double change = (random.nextDouble() - 0.5) * 10; // 涨跌幅
+        
+        return String.format(
+            "{\"instrumentId\":\"%s\", \"instrumentType\":\"STOCK\", \"lastPrice\":%.2f, " +
+            "\"volume\":%d, \"change\":%.2f, \"updateTime\":%d}",
+            instrumentId, price, volume, change, System.currentTimeMillis()
+        );
+    }
+}
+    
