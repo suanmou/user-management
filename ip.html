@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户管理与IP白名单系统</title>
+    <!-- 引入ElementUI样式 -->
+    <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+    <!-- 引入Vue和ElementUI -->
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.js"></script>
+    <script src="https://unpkg.com/element-ui/lib/index.js"></script>
+    <style>
+        .app-container {
+            padding: 20px;
+        }
+        .page-title {
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .status-active {
+            color: #67C23A;
+        }
+        .status-inactive {
+            color: #E6A23C;
+        }
+        .status-pending {
+            color: #909399;
+        }
+        .ip-list {
+            margin: 15px 0;
+            border: 1px solid #EBEEF5;
+            border-radius: 4px;
+        }
+        .operation-buttons {
+            margin-top: 20px;
+            text-align: right;
+        }
+        .history-record {
+            margin: 10px 0;
+            padding: 10px;
+            border-left: 4px solid #409EFF;
+            background-color: #f5f7fa;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <el-container class="app-container">
+            <!-- 主页面：用户列表 -->
+            <template v-if="currentView === 'userList'">
+                <el-header>
+                    <h1 class="page-title">用户管理</h1>
+                </el-header>
+                <el-main>
+                    <el-button type="primary" @click="showUserForm(null)" icon="el-icon-plus">新增用户</el-button>
+                    
+                    <el-table :data="users" style="width: 100%; margin-top: 20px;">
+                        <el-table-column prop="username" label="用户名"></el-table-column>
+                        <el-table-column prop="email" label="邮箱"></el-table-column>
+                        <el-table-column prop="role" label="角色"></el-table-column>
+                        <el-table-column label="IP状态">
+                            <template slot-scope="scope">
+                                <span v-if="scope.row.connectionConfig && scope.row.connectionConfig.ipWhitelist.length">
+                                    <el-tag v-if="allIPsActive(scope.row.connectionConfig.ipWhitelist)" type="success">全部生效</el-tag>
+                                    <el-tag v-else type="warning">有待生效IP</el-tag>
+                                </span>
+                                <span v-else>未配置</span>
+                            </template>
+                        </el-table-column>
+                        <el-table-column label="操作" width="280">
+                            <template slot-scope="scope">
+                                <el-button size="mini" @click="showUserDetails(scope.row)">详情</el-button>
+                                <el-button size="mini" type="primary" @click="showUserForm(scope.row)">编辑</el-button>
+                                <el-button size="mini" type="success" 
+                                           v-if="hasInactiveIPs(scope.row.connectionConfig.ipWhitelist)"
+                                           @click="goToActivation(scope.row)">激活IP</el-button>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                </el-main>
+            </template>
+
+            <!-- 用户表单：新增/编辑用户 -->
+            <template v-else-if="currentView === 'userForm'">
+                <el-header>
+                    <h1 class="page-title">{{ formTitle }}</h1>
+                </el-header>
+                <el-main>
+                    <el-form :model="currentUser" label-width="120px">
+                        <el-form-item label="用户名">
+                            <el-input v-model="currentUser.username"></el-input>
+                        </el-form-item>
+                        <el-form-item label="邮箱">
+                            <el-input v-model="currentUser.email"></el-input>
+                        </el-form-item>
+                        <el-form-item label="角色">
+                            <el-select v-model="currentUser.role" placeholder="请选择角色">
+                                <el-option label="管理员" value="admin"></el-option>
+                                <el-option label="普通用户" value="user"></el-option>
+                            </el-select>
+                        </el-form-item>
+                        
+                        <el-divider>连接配置</el-divider>
+                        
+                        <el-form-item label="IP白名单">
+                            <div class="ip-list">
+                                <div v-for="(ip, index) in currentUser.connectionConfig.ipWhitelist" :key="index" 
+                                     style="padding: 10px; border-bottom: 1px solid #EBEEF5; display: flex; justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <span>{{ ip.ipAddress }}{{ ip.subnetMask ? '/' + ip.subnetMask : '' }}</span>
+                                        <span v-if="ip.description"> - {{ ip.description }}</span>
+                                        <el-tag :class="'status-' + ip.status" size="mini" style="margin-left: 10px;">
+                                            {{ ip.status === 'active' ? '已生效' : ip.status === 'inactive' ? '未生效' : '待生效' }}
+                                        </el-tag>
+                                    </div>
+                                    <div>
+                                        <el-button size="mini" @click="editIP(index)">编辑</el-button>
+                                        <el-button size="mini" type="danger" @click="removeIP(index)">删除</el-button>
+                                    </div>
+                                </div>
+                                <div style="padding: 10px;">
+                                    <el-button type="text" @click="addIP" icon="el-icon-plus">添加IP</el-button>
+                                </div>
+                            </div>
+                        </el-form-item>
+                        
+                        <el-alert title="注意：IP白名单的更改需要激活后才能生效" type="info" :closable="false" style="margin-bottom: 20px;"></el-alert>
+                        
+                        <el-form-item>
+                            <el-button type="primary" @click="saveUser">保存</el-button>
+                            <el-button @click="currentView = 'userList'">取消</el-button>
+                        </el-form-item>
+                    </el-form>
+                </el-main>
+            </template>
+
+            <!-- 用户详情页面 -->
+            <template v-else-if="currentView === 'userDetails'">
+                <el-header>
+                    <h1 class="page-title">用户详情 - {{ currentUser.username }}</h1>
+                </el-header>
+                <el-main>
+                    <el-descriptions :column="2" border>
+                        <el-descriptions-item label="用户名">{{ currentUser.username }}</el-descriptions-item>
+                        <el-descriptions-item label="邮箱">{{ currentUser.email }}</el-descriptions-item>
+                        <el-descriptions-item label="角色">{{ currentUser.role }}</el-descriptions-item>
+                    </el-descriptions>
+
+                    <h3 style="margin-top: 30px;">IP白名单</h3>
+                    <el-table :data="currentUser.connectionConfig.ipWhitelist" style="width: 100%">
+                        <el-table-column prop="ipAddress" label="IP地址"></el-table-column>
+                        <el-table-column prop="subnetMask" label="子网掩码"></el-table-column>
+                        <el-table-column prop="description" label="描述"></el-table-column>
+                        <el-table-column label="状态">
+                            <template slot-scope="scope">
+                                <el-tag :class="'status-' + scope.row.status" size="small">
+                                    {{ scope.row.status === 'active' ? '已生效' : '未生效' }}
+                                </el-tag>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+
+                    <div class="operation-buttons">
+                        <el-button @click="currentView = 'userList'">返回</el-button>
+                        <el-button type="primary" @click="showUserForm(currentUser)">编辑</el-button>
+                        <el-button type="success" 
+                                   v-if="hasInactiveIPs(currentUser.connectionConfig.ipWhitelist)"
+                                   @click="goToActivation(currentUser)">激活IP</el-button>
+                    </div>
+                </el-main>
+            </template>
+
+            <!-- IP激活页面 -->
+            <template v-else-if="currentView === 'ipActivation'">
+                <el-header>
+                    <h1 class="page-title">IP白名单激活 - {{ currentUser.username }}</h1>
+                </el-header>
+                <el-main>
+                    <el-alert title="请选择需要激活的IP白名单条目" type="info" :closable="false" style="margin-bottom: 20px;"></el-alert>
+                    
+                    <el-table :data="currentUser.connectionConfig.ipWhitelist" style="width: 100%">
+                        <el-table-column type="selection" width="55"></el-table-column>
+                        <el-table-column prop="ipAddress" label="IP地址"></el-table-column>
+                        <el-table-column prop="subnetMask" label="子网掩码"></el-table-column>
+                        <el-table-column prop="description" label="描述"></el-table-column>
+                        <el-table-column label="状态">
+                            <template slot-scope="scope">
+                                <el-tag :class="'status-' + scope.row.status" size="small">
+                                    {{ scope.row.status === 'active' ? '已生效' : '未生效' }}
+                                </el-tag>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+
+                    <div class="operation-buttons">
+                        <el-button @click="currentView = 'userList'">返回</el-button>
+                        <el-button type="success" @click="activateIPs">激活所选IP</el-button>
+                    </div>
+                </el-main>
+            </template>
+
+            <!-- 操作历史页面 -->
+            <template v-else-if="currentView === 'operationHistory'">
+                <el-header>
+                    <h1 class="page-title">操作历史 - {{ currentUser.username }}</h1>
+                </el-header>
+                <el-main>
+                    <el-timeline>
+                        <el-timeline-item v-for="(record, index) in operationHistory" :key="index" 
+                                         :timestamp="record.timestamp" placement="top">
+                            <el-card>
+                                <h4>{{ record.operationType }} - {{ record.operator }}</h4>
+                                <p>{{ record.details }}</p>
+                                <el-button v-if="record.canRollback" type="text" @click="rollbackOperation(record)">回滚此操作</el-button>
+                            </el-card>
+                        </el-timeline-item>
+                    </el-timeline>
+
+                    <div class="operation-buttons">
+                        <el-button @click="currentView = previousView">返回</el-button>
+                    </div>
+                </el-main>
+            </template>
+        </el-container>
+
+        <!-- IP编辑对话框 -->
+        <el-dialog :title="ipFormTitle" :visible.sync="ipDialogVisible" width="500px">
+            <el-form :model="currentIP" label-width="100px">
+                <el-form-item label="IP地址">
+                    <el-input v-model="currentIP.ipAddress"></el-input>
+                </el-form-item>
+                <el-form-item label="子网掩码">
+                    <el-input v-model="currentIP.subnetMask"></el-input>
+                </el-form-item>
+                <el-form-item label="描述">
+                    <el-input v-model="currentIP.description" type="textarea"></el-input>
+                </el-form-item>
+            </el-form>
+            <span slot="footer" class="dialog-footer">
+                <el-button @click="ipDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="saveIP">保存</el-button>
+            </span>
+        </el-dialog>
+    </div>
+
+    <script>
+        new Vue({
+            el: '#app',
+            data() {
+                return {
+                    currentView: 'userList',
+                    previousView: 'userList',
+                    users: [
+                        {
+                            id: 1,
+                            username: 'user1',
+                            email: 'user1@example.com',
+                            role: 'admin',
+                            connectionConfig: {
+                                ipWhitelist: [
+                                    { ipAddress: '192.168.1.1', subnetMask: '24', description: '内部服务器', status: 'active' },
+                                    { ipAddress: '10.0.0.5', subnetMask: '32', description: '管理主机', status: 'inactive' }
+                                ]
+                            }
+                        },
+                        {
+                            id: 2,
+                            username: 'user2',
+                            email: 'user2@example.com',
+                            role: 'user',
+                            connectionConfig: {
+                                ipWhitelist: [
+                                    { ipAddress: '172.16.0.10', subnetMask: '24', description: '测试服务器', status: 'active' }
+                                ]
+                            }
+                        }
+                    ],
+                    currentUser: {
+                        id: null,
+                        username: '',
+                        email: '',
+                        role: '',
+                        connectionConfig: {
+                            ipWhitelist: []
+                        }
+                    },
+                    currentIP: {
+                        ipAddress: '',
+                        subnetMask: '',
+                        description: '',
+                        status: 'inactive'
+                    },
+                    currentIPIndex: -1,
+                    ipDialogVisible: false,
+                    operationHistory: [
+                        {
+                            id: 1,
+                            userId: 1,
+                            operationType: '添加IP',
+                            operator: 'admin',
+                            timestamp: '2023-07-15 10:30:25',
+                            details: '添加IP: 192.168.1.1/24 (内部服务器)',
+                            canRollback: true
+                        },
+                        {
+                            id: 2,
+                            userId: 1,
+                            operationType: '修改IP',
+                            operator: 'admin',
+                            timestamp: '2023-07-16 14:20:15',
+                            details: '修改IP: 10.0.0.5/32 (管理主机)',
+                            canRollback: true
+                        }
+                    ]
+                };
+            },
+            computed: {
+                formTitle() {
+                    return this.currentUser.id ? '编辑用户' : '新增用户';
+                },
+                ipFormTitle() {
+                    return this.currentIPIndex >= 0 ? '编辑IP' : '新增IP';
+                }
+            },
+            methods: {
+                // 检查所有IP是否都已生效
+                allIPsActive(ipList) {
+                    if (!ipList || ipList.length === 0) return false;
+                    return ipList.every(ip => ip.status === 'active');
+                },
+                
+                // 检查是否有未生效的IP
+                hasInactiveIPs(ipList) {
+                    if (!ipList || ipList.length === 0) return false;
+                    return ipList.some(ip => ip.status === 'inactive');
+                },
+                
+                // 显示用户表单
+                showUserForm(user) {
+                    if (user) {
+                        // 深拷贝用户对象，避免直接修改原对象
+                        this.currentUser = JSON.parse(JSON.stringify(user));
+                    } else {
+                        // 新增用户
+                        this.currentUser = {
+                            id: null,
+                            username: '',
+                            email: '',
+                            role: '',
+                            connectionConfig: {
+                                ipWhitelist: []
+                            }
+                        };
+                    }
+                    this.currentView = 'userForm';
+                },
+                
+                // 显示用户详情
+                showUserDetails(user) {
+                    this.currentUser = JSON.parse(JSON.stringify(user));
+                    this.currentView = 'userDetails';
+                },
+                
+                // 添加IP
+                addIP() {
+                    this.currentIP = {
+                        ipAddress: '',
+                        subnetMask: '',
+                        description: '',
+                        status: 'inactive'
+                    };
+                    this.currentIPIndex = -1;
+                    this.ipDialogVisible = true;
+                },
+                
+                // 编辑IP
+                editIP(index) {
+                    this.currentIP = Object.assign({}, this.currentUser.connectionConfig.ipWhitelist[index]);
+                    this.currentIPIndex = index;
+                    this.ipDialogVisible = true;
+                },
+                
+                // 删除IP
+                removeIP(index) {
+                    this.$confirm('确定删除此IP吗?', '提示', {
+                        confirmButtonText: '确定',
+                        cancelButtonText: '取消',
+                        type: 'warning'
+                    }).then(() => {
+                        // 记录操作历史
+                        const ip = this.currentUser.connectionConfig.ipWhitelist[index];
+                        this.recordOperation('删除IP', `删除IP: ${ip.ipAddress}/${ip.subnetMask} (${ip.description || '无描述'})`);
+                        
+                        this.currentUser.connectionConfig.ipWhitelist.splice(index, 1);
+                    });
+                },
+                
+                // 保存IP
+                saveIP() {
+                    if (this.currentIPIndex >= 0) {
+                        // 编辑现有IP
+                        const oldIP = this.currentUser.connectionConfig.ipWhitelist[this.currentIPIndex];
+                        this.currentUser.connectionConfig.ipWhitelist.splice(this.currentIPIndex, 1, this.currentIP);
+                        
+                        // 记录操作历史
+                        this.recordOperation('修改IP', 
+                            `修改IP: ${oldIP.ipAddress}/${oldIP.subnetMask} -> ${this.currentIP.ipAddress}/${this.currentIP.subnetMask}`);
+                    } else {
+                        // 添加新IP
+                        this.currentUser.connectionConfig.ipWhitelist.push(this.currentIP);
+                        
+                        // 记录操作历史
+                        this.recordOperation('添加IP', 
+                            `添加IP: ${this.currentIP.ipAddress}/${this.currentIP.subnetMask} (${this.currentIP.description || '无描述'})`);
+                    }
+                    
+                    this.ipDialogVisible = false;
+                },
+                
+                // 保存用户
+                saveUser() {
+                    // 模拟保存到MongoDB
+                    if (this.currentUser.id) {
+                        // 更新现有用户
+                        const index = this.users.findIndex(u => u.id === this.currentUser.id);
+                        if (index >= 0) {
+                            this.users.splice(index, 1, this.currentUser);
+                        }
+                    } else {
+                        // 新增用户
+                        this.currentUser.id = this.users.length + 1;
+                        this.users.push(this.currentUser);
+                    }
+                    
+                    this.$message({
+                        message: '用户信息已保存，但IP更改需要激活后才能生效',
+                        type: 'success',
+                        duration: 3000
+                    });
+                    
+                    this.currentView = 'userList';
+                },
+                
+                // 前往激活页面
+                goToActivation(user) {
+                    this.currentUser = JSON.parse(JSON.stringify(user));
+                    this.previousView = this.currentView;
+                    this.currentView = 'ipActivation';
+                },
+                
+                // 激活所选IP
+                activateIPs() {
+                    this.$confirm('确定激活所选IP吗?', '提示', {
+                        confirmButtonText: '确定',
+                        cancelButtonText: '取消',
+                        type: 'warning'
+                    }).then(() => {
+                        // 模拟调用第三方API
+                        this.$message({
+                            message: '正在激活IP，请稍候...',
+                            type: 'info',
+                            duration: 2000
+                        });
+                        
+                        // 模拟异步操作
+                        setTimeout(() => {
+                            // 更新IP状态为已生效
+                            this.currentUser.connectionConfig.ipWhitelist.forEach(ip => {
+                                ip.status = 'active';
+                            });
+                            
+                            // 更新用户数据
+                            const index = this.users.findIndex(u => u.id === this.currentUser.id);
+                            if (index >= 0) {
+                                this.users.splice(index, 1, this.currentUser);
+                            }
+                            
+                            this.$message({
+                                message: 'IP激活成功',
+                                type: 'success'
+                            });
+                            
+                            // 记录操作历史
+                            this.recordOperation('激活IP', '激活了所选IP白名单');
+                            
+                            this.currentView = 'userList';
+                        }, 1500);
+                    });
+                },
+                
+                // 显示操作历史
+                showOperationHistory(user) {
+                    this.currentUser = JSON.parse(JSON.stringify(user));
+                    this.previousView = this.currentView;
+                    this.currentView = 'operationHistory';
+                },
+                
+                // 记录操作历史
+                recordOperation(type, details) {
+                    this.operationHistory.unshift({
+                        id: this.operationHistory.length + 1,
+                        userId: this.currentUser.id,
+                        operationType: type,
+                        operator: '当前用户',
+                        timestamp: new Date().toLocaleString(),
+                        details: details,
+                        canRollback: true
+                    });
+                },
+                
+                // 回滚操作
+                rollbackOperation(record) {
+                    this.$confirm('确定回滚此操作吗?', '提示', {
+                        confirmButtonText: '确定',
+                        cancelButtonText: '取消',
+                        type: 'warning'
+                    }).then(() => {
+                        // 模拟回滚操作
+                        this.$message({
+                            message: '操作已回滚',
+                            type: 'success'
+                        });
+                        
+                        // 在实际应用中，这里会根据操作类型执行相应的回滚逻辑
+                        record.canRollback = false;
+                    });
+                }
+            }
+        });
+    </script>
+</body>
+</html>
