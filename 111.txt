@@ -1,0 +1,704 @@
+import quickfix.*;
+import quickfix.fix44.*;
+import quickfix.field.*;
+import java.util.*;
+
+public class FixMarketDataHandler extends MessageCracker {
+
+    private final DataSourceService dataSource;
+    private final Map<SessionID, Set<String>> clientSubscriptions = new HashMap<>();
+    
+    // 全市场数据订阅标志
+    private final Map<SessionID, Boolean> fullMarketSubscriptions = new HashMap<>();
+
+    public void onMessage(MarketDataRequest request, SessionID sessionID) {
+        try {
+            MDReqID mdReqID = new MDReqID();
+            SubscriptionRequestType subType = new SubscriptionRequestType();
+            MarketDepth marketDepth = new MarketDepth();
+            
+            request.get(mdReqID);
+            request.get(subType);
+            request.get(marketDepth);
+
+            // 检查是否请求所有证券
+            boolean requestAllSymbols = isRequestingAllSymbols(request);
+            
+            if (requestAllSymbols) {
+                handleFullMarketDataRequest(mdReqID.getValue(), subType, marketDepth, sessionID);
+            } else {
+                handleSpecificSymbolsRequest(request, mdReqID, sessionID);
+            }
+            
+        } catch (FieldNotFound | DataSourceException e) {
+            logError("Market data processing failed", e);
+        }
+    }
+
+    private boolean isRequestingAllSymbols(MarketDataRequest request) throws FieldNotFound {
+        // 检查是否有通配符或特殊标记
+        NoRelatedSym numGroups = new NoRelatedSym();
+        request.get(numGroups);
+        
+        int groupCount = numGroups.getValue();
+        for (int i = 1; i <= groupCount; i++) {
+            MarketDataRequest.NoRelatedSym group = new MarketDataRequest.NoRelatedSym();
+            request.getGroup(i, group);
+            
+            Symbol symbol = new Symbol();
+            group.get(symbol);
+            
+            if ("*".equals(symbol.getValue()) || "ALL".equals(symbol.getValue())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void handleFullMarketDataRequest(String reqId, 
+                                           SubscriptionRequestType subType,
+                                           MarketDepth marketDepth,
+                                           SessionID sessionID) throws DataSourceException {
+        
+        // 标记此会话已订阅全市场数据
+        fullMarketSubscriptions.put(sessionID, true);
+        
+        // 获取所有证券
+        List<String> allSymbols = dataSource.getAllSymbols();
+        
+        // 对于快照请求，发送所有证券的当前数据
+        if (subType.getValue() == SubscriptionRequestType.SNAPSHOT || 
+            subType.getValue() == SubscriptionRequestType.SNAPSHOT_PLUS_UPDATES) {
+            
+            for (String symbol : allSymbols) {
+                MarketData marketData = dataSource.getMarketData(symbol);
+                MarketDataSnapshotFullRefresh fixMessage = createFixSnapshot(
+                    reqId, symbol, marketData);
+                Session.sendToTarget(fixMessage, sessionID);
+            }
+        }
+        
+        // 对于持续更新，注册回调
+        if (subType.getValue() == SubscriptionRequestType.SNAPSHOT_PLUS_UPDATES || 
+            subType.getValue() == SubscriptionRequestType.DISABLE_PREVIOUS_SNAPSHOT) {
+            
+            // 注册数据源回调，当任何证券数据更新时通知此会话
+            dataSource.registerFullMarketCallback(sessionID, (symbol, data) -> {
+                MarketDataIncrementalRefresh refresh = createIncrementalRefresh(
+                    reqId, symbol, data);
+                Session.sendToTarget(refresh, sessionID);
+            });
+        }
+    }
+
+    private MarketDataIncrementalRefresh createIncrementalRefresh(String reqId, 
+                                                                String symbol, 
+                                                                MarketData data) {
+        MarketDataIncrementalRefresh refresh = new MarketDataIncrementalRefresh();
+        refresh.set(new MDReqID(reqId));
+        
+        // 添加BID条目更新
+        MarketDataIncrementalRefresh.NoMDEntries bidEntry = 
+            new MarketDataIncrementalRefresh.NoMDEntries();
+        bidEntry.set(new MDUpdateAction(MDUpdateAction.NEW));
+        bidEntry.set(new MDEntryType(MDEntryType.BID));
+        bidEntry.set(new MDEntryID(UUID.randomUUID().toString()));
+        bidEntry.set(new Symbol(symbol));
+        bidEntry.set(new MDEntryPx(data.getBid()));
+        bidEntry.set(new MDEntrySize(data.getBidSize()));
+        refresh.addGroup(bidEntry);
+        
+        // 添加ASK条目更新
+        MarketDataIncrementalRefresh.NoMDEntries askEntry = 
+            new MarketDataIncrementalRefresh.NoMDEntries();
+        askEntry.set(new MDUpdateAction(MDUpdateAction.NEW));
+        askEntry.set(new MDEntryType(MDEntryType.OFFER));
+        askEntry.set(new MDEntryID(UUID.randomUUID().toString()));
+        askEntry.set(new Symbol(symbol));
+        askEntry.set(new MDEntryPx(data.getAsk()));
+        askEntry.set(new MDEntrySize(data.getAskSize()));
+        refresh.addGroup(askEntry);
+        
+        return refresh;
+    }
+    
+    // 处理会话断开时的清理
+    public void onLogout(SessionID sessionID) {
+        fullMarketSubscriptions.remove(sessionID);
+        dataSource.unregisterCallback(sessionID);
+    }
+}
+
+
+public class DataSourceService {
+    private final Map<SessionID, FullMarketCallback> callbacks = new ConcurrentHashMap<>();
+    
+    public List<String> getAllSymbols() throws DataSourceException {
+        // 从数据源获取所有可交易证券列表
+        // 实际实现中，这可能从数据库、配置文件或外部API获取
+        try {
+            // 示例实现 - 实际中应从可靠数据源获取
+            return Arrays.asList("EUR/USD", "USD/JPY", "GBP/USD", 
+                                "AUD/USD", "USD/CHF", "USD/CAD",
+                                "NZD/USD", "EUR/GBP", "EUR/JPY");
+        } catch (Exception e) {
+            throw new DataSourceException("Failed to fetch symbol list", e);
+        }
+    }
+    
+    public void registerFullMarketCallback(SessionID sessionID, FullMarketCallback callback) {
+        callbacks.put(sessionID, callback);
+        
+        // 启动数据推送线程（如果尚未启动）
+        startMarketDataBroadcast();
+    }
+    
+    public void unregisterCallback(SessionID sessionID) {
+        callbacks.remove(sessionID);
+    }
+    
+    private void startMarketDataBroadcast() {
+        // 确保只有一个广播线程运行
+        if (broadcastThread == null || !broadcastThread.isAlive()) {
+            broadcastThread = new Thread(this::broadcastMarketData);
+            broadcastThread.setDaemon(true);
+            broadcastThread.start();
+        }
+    }
+    
+    private void broadcastMarketData() {
+        while (!callbacks.isEmpty()) {
+            try {
+                // 模拟市场数据更新
+                List<String> allSymbols = getAllSymbols();
+                for (String symbol : allSymbols) {
+                    MarketData data = generateRandomMarketData(symbol);
+                    
+                    // 通知所有注册的客户端
+                    for (FullMarketCallback callback : callbacks.values()) {
+                        callback.onMarketDataUpdate(symbol, data);
+                    }
+                    
+                    Thread.sleep(100); // 控制更新频率
+                }
+                
+                Thread.sleep(1000); // 每秒更新一轮
+            } catch (Exception e) {
+                log.error("Market data broadcast error", e);
+            }
+        }
+    }
+    
+    @FunctionalInterface
+    public interface FullMarketCallback {
+        void onMarketDataUpdate(String symbol, MarketData data);
+    }
+}
+
+
+// 批量处理优化
+public class BulkMarketDataProcessor {
+    private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    private final Map<SessionID, BlockingQueue<MarketData>> dataQueues = new ConcurrentHashMap<>();
+    
+    public void enqueueData(SessionID sessionID, MarketData data) {
+        dataQueues.computeIfAbsent(sessionID, id -> {
+            BlockingQueue<MarketData> queue = new LinkedBlockingQueue<>(1000);
+            startProcessingThread(id, queue);
+            return queue;
+        }).offer(data);
+    }
+    
+    private void startProcessingThread(SessionID sessionID, BlockingQueue<MarketData> queue) {
+        executor.submit(() -> {
+            List<MarketData> batch = new ArrayList<>(100);
+            while (true) {
+                try {
+                    // 批量收集数据
+                    batch.clear();
+                    MarketData data = queue.poll(100, TimeUnit.MILLISECONDS);
+                    if (data != null) {
+                        batch.add(data);
+                        queue.drainTo(batch, 99); // 再收集99条
+                        
+                        // 批量处理并发送
+                        processAndSendBatch(sessionID, batch);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        });
+    }
+    
+    private void processAndSendBatch(SessionID sessionID, List<MarketData> batch) {
+        // 创建批量FIX消息
+        MarketDataIncrementalRefresh refresh = new MarketDataIncrementalRefresh();
+        refresh.set(new MDReqID("BATCH_" + System.currentTimeMillis()));
+        
+        for (MarketData data : batch) {
+            // 添加条目到批量消息...
+        }
+        
+        Session.sendToTarget(refresh, sessionID);
+    }
+}
+
+
+// 创建全市场数据请求
+MarketDataRequest request = new MarketDataRequest();
+request.set(new MDReqID("FULL_MARKET_1"));
+request.set(new SubscriptionRequestType(SubscriptionRequestType.SNAPSHOT_PLUS_UPDATES));
+request.set(new MarketDepth(1)); // 市场深度
+
+// 使用通配符请求所有证券
+NoRelatedSym symbols = new NoRelatedSym(1);
+symbols.set(new Symbol("*")); // 通配符表示所有证券
+request.addGroup(symbols);
+
+// 请求买卖价格
+NoMDEntryTypes entryTypes = new NoMDEntryTypes(2);
+entryTypes.set(new MDEntryType(MDEntryType.BID));
+entryTypes.set(new MDEntryType(MDEntryType.OFFER));
+request.addGroup(entryTypes);
+
+// 发送请求
+Session.sendToTarget(request, sessionID);
+
+
+
+// 创建取消订阅请求
+MarketDataRequest unsubscribeRequest = new MarketDataRequest();
+unsubscribeRequest.set(new MDReqID("UNSUBSCRIBE_001")); // 唯一请求ID
+unsubscribeRequest.set(new SubscriptionRequestType(SubscriptionRequestType.DISABLE_PREVIOUS_SNAPSHOT)); // 2 = 取消订阅
+unsubscribeRequest.set(new MarketDepth(0)); // 深度设为0表示取消
+
+// 指定要取消的证券
+NoRelatedSym symbols = new NoRelatedSym(1);
+symbols.set(new Symbol("EUR/USD")); // 要取消的证券
+unsubscribeRequest.addGroup(symbols);
+
+// 发送取消订阅请求
+Session.sendToTarget(unsubscribeRequest, sessionID);
+
+
+import quickfix.*;
+import quickfix.fix44.*;
+import quickfix.field.*;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class FixMarketDataHandler extends MessageCracker {
+
+    // 存储客户端订阅信息
+    private final Map<SessionID, Map<String, SubscriptionInfo>> clientSubscriptions = new ConcurrentHashMap<>();
+    
+    // 订阅信息类
+    private static class SubscriptionInfo {
+        String mdReqId;
+        SubscriptionRequestType subType;
+        MarketDepth marketDepth;
+        Set<MDEntryType> entryTypes;
+        long subscriptionTime;
+        
+        SubscriptionInfo(String mdReqId, SubscriptionRequestType subType, 
+                        MarketDepth marketDepth, Set<MDEntryType> entryTypes) {
+            this.mdReqId = mdReqId;
+            this.subType = subType;
+            this.marketDepth = marketDepth;
+            this.entryTypes = entryTypes;
+            this.subscriptionTime = System.currentTimeMillis();
+        }
+    }
+
+    @Override
+    public void onMessage(MarketDataRequest request, SessionID sessionID) {
+        try {
+            MDReqID mdReqID = new MDReqID();
+            SubscriptionRequestType subType = new SubscriptionRequestType();
+            MarketDepth marketDepth = new MarketDepth();
+            
+            request.get(mdReqID);
+            request.get(subType);
+            request.get(marketDepth);
+
+            // 检查是否是取消订阅请求
+            if (subType.getValue() == SubscriptionRequestType.DISABLE_PREVIOUS_SNAPSHOT) {
+                handleUnsubscribeRequest(mdReqID.getValue(), request, sessionID);
+                return;
+            }
+            
+            // 处理正常订阅请求
+            handleSubscriptionRequest(request, mdReqID, subType, marketDepth, sessionID);
+            
+        } catch (FieldNotFound | DataSourceException e) {
+            logError("Market data request processing failed", e);
+        }
+    }
+
+    private void handleUnsubscribeRequest(String mdReqId, MarketDataRequest request, SessionID sessionID) 
+            throws FieldNotFound {
+        
+        // 获取客户端订阅映射
+        Map<String, SubscriptionInfo> subscriptions = clientSubscriptions.get(sessionID);
+        if (subscriptions == null || subscriptions.isEmpty()) {
+            sendRejectMessage(mdReqId, "No active subscriptions found", sessionID);
+            return;
+        }
+        
+        // 检查是否有指定要取消的证券
+        NoRelatedSym numGroups = new NoRelatedSym();
+        if (request.isSetField(numGroups)) {
+            request.get(numGroups);
+            
+            int groupCount = numGroups.getValue();
+            if (groupCount > 0) {
+                // 取消特定证券的订阅
+                for (int i = 1; i <= groupCount; i++) {
+                    MarketDataRequest.NoRelatedSym group = new MarketDataRequest.NoRelatedSym();
+                    request.getGroup(i, group);
+                    
+                    Symbol symbol = new Symbol();
+                    if (group.isSetField(symbol)) {
+                        group.get(symbol);
+                        unsubscribeSymbol(sessionID, symbol.getValue());
+                    }
+                }
+            } else {
+                // 如果没有指定证券，取消所有订阅
+                unsubscribeAll(sessionID);
+            }
+        } else {
+            // 如果没有指定证券，取消所有订阅
+            unsubscribeAll(sessionID);
+        }
+        
+        // 发送确认消息
+        sendUnsubscribeConfirmation(mdReqId, sessionID);
+    }
+    
+    private void unsubscribeSymbol(SessionID sessionID, String symbol) {
+        Map<String, SubscriptionInfo> subscriptions = clientSubscriptions.get(sessionID);
+        if (subscriptions != null) {
+            // 移除该证券的订阅
+            subscriptions.remove(symbol);
+            
+            // 通知数据源停止发送该证券的数据
+            dataSource.unsubscribeSymbol(sessionID, symbol);
+            
+            logger.info("Unsubscribed from {} for session {}", symbol, sessionID);
+        }
+    }
+    
+    private void unsubscribeAll(SessionID sessionID) {
+        Map<String, SubscriptionInfo> subscriptions = clientSubscriptions.get(sessionID);
+        if (subscriptions != null) {
+            // 通知数据源停止所有数据发送
+            dataSource.unsubscribeAll(sessionID);
+            
+            // 清空订阅列表
+            subscriptions.clear();
+            clientSubscriptions.remove(sessionID);
+            
+            logger.info("Unsubscribed all symbols for session {}", sessionID);
+        }
+    }
+    
+    private void sendUnsubscribeConfirmation(String mdReqId, SessionID sessionID) {
+        // 创建业务消息拒绝(BusinessMessageReject)作为确认
+        BusinessMessageReject reject = new BusinessMessageReject();
+        reject.set(new RefMsgType("V")); // V = MarketDataRequest
+        reject.set(new RefSeqNum(0)); // 实际应用中应设置正确的序列号
+        reject.set(new BusinessRejectReason(BusinessRejectReason.SUCCESS));
+        reject.set(new Text("Unsubscribe request processed successfully"));
+        
+        try {
+            Session.sendToTarget(reject, sessionID);
+        } catch (SessionNotFound e) {
+            logger.warn("Session not found for unsubscribe confirmation: {}", sessionID);
+        }
+    }
+    
+    // 处理正常订阅请求
+    private void handleSubscriptionRequest(MarketDataRequest request, MDReqID mdReqID, 
+                                         SubscriptionRequestType subType, MarketDepth marketDepth, 
+                                         SessionID sessionID) throws FieldNotFound, DataSourceException {
+        // 获取请求的证券列表
+        NoRelatedSym numGroups = new NoRelatedSym();
+        request.get(numGroups);
+        
+        int groupCount = numGroups.getValue();
+        Set<String> symbols = new HashSet<>();
+        
+        for (int i = 1; i <= groupCount; i++) {
+            MarketDataRequest.NoRelatedSym group = new MarketDataRequest.NoRelatedSym();
+            request.getGroup(i, group);
+            
+            Symbol symbol = new Symbol();
+            group.get(symbol);
+            symbols.add(symbol.getValue());
+        }
+        
+        // 获取请求的条目类型
+        NoMDEntryTypes numEntryTypes = new NoMDEntryTypes();
+        request.get(numEntryTypes);
+        
+        int entryTypeCount = numEntryTypes.getValue();
+        Set<MDEntryType> entryTypes = new HashSet<>();
+        
+        for (int i = 1; i <= entryTypeCount; i++) {
+            MarketDataRequest.NoMDEntryTypes entryTypeGroup = new MarketDataRequest.NoMDEntryTypes();
+            request.getGroup(i, entryTypeGroup);
+            
+            MDEntryType entryType = new MDEntryType();
+            entryTypeGroup.get(entryType);
+            entryTypes.add(entryType);
+        }
+        
+        // 存储订阅信息
+        Map<String, SubscriptionInfo> subscriptions = clientSubscriptions.computeIfAbsent(
+            sessionID, k -> new ConcurrentHashMap<>());
+        
+        for (String symbol : symbols) {
+            subscriptions.put(symbol, new SubscriptionInfo(
+                mdReqID.getValue(), subType, marketDepth, entryTypes));
+            
+            // 通知数据源开始发送数据
+            dataSource.subscribeSymbol(sessionID, symbol, subType, entryTypes);
+        }
+        
+        // 发送初始快照（如果需要）
+        if (subType.getValue() == SubscriptionRequestType.SNAPSHOT || 
+            subType.getValue() == SubscriptionRequestType.SNAPSHOT_PLUS_UPDATES) {
+            
+            for (String symbol : symbols) {
+                MarketData marketData = dataSource.getMarketData(symbol);
+                MarketDataSnapshotFullRefresh snapshot = createFixSnapshot(
+                    mdReqID.getValue(), symbol, marketData);
+                Session.sendToTarget(snapshot, sessionID);
+            }
+        }
+    }
+    
+    // 处理会话断开时的清理
+    public void onLogout(SessionID sessionID) {
+        Map<String, SubscriptionInfo> subscriptions = clientSubscriptions.remove(sessionID);
+        if (subscriptions != null) {
+            dataSource.unsubscribeAll(sessionID);
+            logger.info("Cleaned up subscriptions for disconnected session: {}", sessionID);
+        }
+    }
+}
+
+
+public class DataSourceService {
+    // 存储会话订阅信息
+    private final Map<SessionID, Map<String, SubscriptionDetail>> sessionSubscriptions = new ConcurrentHashMap<>();
+    
+    // 回调注册表
+    private final Map<SessionID, FullMarketCallback> fullMarketCallbacks = new ConcurrentHashMap<>();
+    
+    // 订阅详情类
+    private static class SubscriptionDetail {
+        SubscriptionRequestType subType;
+        Set<MDEntryType> entryTypes;
+        long lastUpdateTime;
+        
+        SubscriptionDetail(SubscriptionRequestType subType, Set<MDEntryType> entryTypes) {
+            this.subType = subType;
+            this.entryTypes = entryTypes;
+            this.lastUpdateTime = System.currentTimeMillis();
+        }
+    }
+    
+    public void subscribeSymbol(SessionID sessionID, String symbol, 
+                              SubscriptionRequestType subType, Set<MDEntryType> entryTypes) {
+        Map<String, SubscriptionDetail> subscriptions = sessionSubscriptions.computeIfAbsent(
+            sessionID, k -> new ConcurrentHashMap<>());
+        
+        subscriptions.put(symbol, new SubscriptionDetail(subType, entryTypes));
+        
+        logger.info("Session {} subscribed to {} with type {}", sessionID, symbol, subType.getValue());
+    }
+    
+    public void unsubscribeSymbol(SessionID sessionID, String symbol) {
+        Map<String, SubscriptionDetail> subscriptions = sessionSubscriptions.get(sessionID);
+        if (subscriptions != null) {
+            subscriptions.remove(symbol);
+            logger.info("Session {} unsubscribed from {}", sessionID, symbol);
+            
+            // 如果这是最后一个订阅，清理会话
+            if (subscriptions.isEmpty()) {
+                sessionSubscriptions.remove(sessionID);
+                fullMarketCallbacks.remove(sessionID);
+            }
+        }
+    }
+    
+    public void unsubscribeAll(SessionID sessionID) {
+        Map<String, SubscriptionDetail> subscriptions = sessionSubscriptions.remove(sessionID);
+        fullMarketCallbacks.remove(sessionID);
+        
+        if (subscriptions != null) {
+            logger.info("Removed all {} subscriptions for session {}", subscriptions.size(), sessionID);
+        }
+    }
+    
+    // 检查是否应该向会话发送特定证券的数据
+    public boolean shouldSendData(SessionID sessionID, String symbol, MDEntryType entryType) {
+        Map<String, SubscriptionDetail> subscriptions = sessionSubscriptions.get(sessionID);
+        if (subscriptions == null) {
+            return false;
+        }
+        
+        SubscriptionDetail detail = subscriptions.get(symbol);
+        if (detail == null) {
+            return false;
+        }
+        
+        // 检查是否订阅了此条目类型
+        return detail.entryTypes.contains(entryType);
+    }
+    
+    // 数据广播时检查订阅
+    private void broadcastMarketData() {
+        while (!sessionSubscriptions.isEmpty()) {
+            try {
+                // 获取所有活跃证券
+                List<String> activeSymbols = getActiveSymbols();
+                
+                for (String symbol : activeSymbols) {
+                    MarketData data = getMarketData(symbol);
+                    
+                    // 为每个会话检查是否需要发送此证券的数据
+                    for (Map.Entry<SessionID, Map<String, SubscriptionDetail>> entry : 
+                         sessionSubscriptions.entrySet()) {
+                        
+                        SessionID sessionID = entry.getKey();
+                        Map<String, SubscriptionDetail> subscriptions = entry.getValue();
+                        
+                        // 检查此会话是否订阅了此证券
+                        if (subscriptions.containsKey(symbol)) {
+                            SubscriptionDetail detail = subscriptions.get(symbol);
+                            
+                            // 检查订阅类型是否需要更新
+                            if (detail.subType.getValue() == SubscriptionRequestType.SNAPSHOT_PLUS_UPDATES) {
+                                // 发送增量更新
+                                FullMarketCallback callback = fullMarketCallbacks.get(sessionID);
+                                if (callback != null) {
+                                    callback.onMarketDataUpdate(symbol, data);
+                                }
+                            }
+                        }
+                    }
+                    
+                    Thread.sleep(10); // 控制更新频率
+                }
+                
+                Thread.sleep(1000); // 每秒更新一轮
+            } catch (Exception e) {
+                logger.error("Market data broadcast error", e);
+            }
+        }
+    }
+}
+
+
+
+public void unsubscribeSymbol(SessionID sessionID, String symbol, String originalReqId) {
+    MarketDataRequest request = new MarketDataRequest();
+    
+    // 使用原始请求ID或生成新的
+    String unsubscribeId = "UNSUB_" + originalReqId;
+    request.set(new MDReqID(unsubscribeId));
+    
+    // 设置取消订阅类型
+    request.set(new SubscriptionRequestType(SubscriptionRequestType.DISABLE_PREVIOUS_SNAPSHOT));
+    request.set(new MarketDepth(0)); // 深度设为0
+    
+    // 指定要取消的证券
+    NoRelatedSym symbols = new NoRelatedSym(1);
+    symbols.set(new Symbol(symbol));
+    request.addGroup(symbols);
+    
+    // 发送取消订阅请求
+    try {
+        Session.sendToTarget(request, sessionID);
+        logger.info("Sent unsubscribe request for {}", symbol);
+    } catch (SessionNotFound e) {
+        logger.error("Session not found for unsubscribe", e);
+    }
+}
+
+
+public void unsubscribeAll(SessionID sessionID) {
+    MarketDataRequest request = new MarketDataRequest();
+    request.set(new MDReqID("UNSUB_ALL_" + System.currentTimeMillis()));
+    request.set(new SubscriptionRequestType(SubscriptionRequestType.DISABLE_PREVIOUS_SNAPSHOT));
+    request.set(new MarketDepth(0));
+    
+    // 不指定任何证券表示取消所有
+    NoRelatedSym symbols = new NoRelatedSym(0);
+    request.addGroup(symbols);
+    
+    try {
+        Session.sendToTarget(request, sessionID);
+        logger.info("Sent unsubscribe all request");
+    } catch (SessionNotFound e) {
+        logger.error("Session not found for unsubscribe all", e);
+    }
+}
+
+
+// 订阅监控管理器
+public class SubscriptionMonitor {
+    private final FixMarketDataHandler handler;
+    
+    public SubscriptionMonitor(FixMarketDataHandler handler) {
+        this.handler = handler;
+    }
+    
+    // 获取所有活跃订阅
+    public Map<SessionID, List<String>> getActiveSubscriptions() {
+        Map<SessionID, List<String>> result = new HashMap<>();
+        
+        for (Map.Entry<SessionID, Map<String, SubscriptionInfo>> entry : 
+             handler.getClientSubscriptions().entrySet()) {
+            
+            result.put(entry.getKey(), new ArrayList<>(entry.getValue().keySet()));
+        }
+        
+        return result;
+    }
+    
+    // 强制取消会话的所有订阅
+    public void forceUnsubscribeAll(SessionID sessionID) {
+        handler.unsubscribeAll(sessionID);
+    }
+    
+    // 获取订阅统计信息
+    public SubscriptionStats getSubscriptionStats() {
+        SubscriptionStats stats = new SubscriptionStats();
+        
+        for (Map<String, SubscriptionInfo> subscriptions : handler.getClientSubscriptions().values()) {
+            stats.totalSubscriptions += subscriptions.size();
+            
+            for (SubscriptionInfo info : subscriptions.values()) {
+                if (info.subType.getValue() == SubscriptionRequestType.SNAPSHOT) {
+                    stats.snapshotSubscriptions++;
+                } else if (info.subType.getValue() == SubscriptionRequestType.SNAPSHOT_PLUS_UPDATES) {
+                    stats.streamingSubscriptions++;
+                }
+            }
+        }
+        
+        return stats;
+    }
+    
+    public static class SubscriptionStats {
+        public int totalSubscriptions;
+        public int snapshotSubscriptions;
+        public int streamingSubscriptions;
+    }
+}
