@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>股票价格跳动表（表格形式）</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+  <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.js"></script>
+  <script src="https://unpkg.com/element-ui/lib/index.js"></script>
+  <style>
+    .app-container {
+      padding: 20px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .control-panel {
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+    }
+    .price-table {
+      box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .price-up {
+      color: #67c23a;
+      animation: blink-up 0.8s ease;
+    }
+    .price-down {
+      color: #f56c6c;
+      animation: blink-down 0.8s ease;
+    }
+    @keyframes blink-up {
+      0% { background-color: rgba(103, 194, 58, 0.2); }
+      100% { background-color: transparent; }
+    }
+    @keyframes blink-down {
+      0% { background-color: rgba(245, 108, 108, 0.2); }
+      100% { background-color: transparent; }
+    }
+    .stock-table {
+      width: 100%;
+    }
+    .table-wrapper {
+      max-height: 600px;
+      overflow-y: auto;
+    }
+    .symbol-cell {
+      font-weight: bold;
+    }
+    .name-cell {
+      color: #606266;
+    }
+    .spread-positive {
+      color: #67c23a;
+    }
+    .spread-negative {
+      color: #f56c6c;
+    }
+    .action-cell {
+      text-align: center;
+    }
+    .last-update {
+      font-size: 12px;
+      color: #909399;
+    }
+    .stats-bar {
+      margin-top: 15px;
+      padding: 10px;
+      background-color: #f5f7fa;
+      border-radius: 4px;
+      display: flex;
+      justify-content: space-between;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="app-container">
+      <div class="header">
+        <h1>实时股票价格跳动表</h1>
+        <p>监控股票买入价和卖出价的实时变化</p>
+      </div>
+      
+      <div class="control-panel">
+        <el-button @click="toggleUpdates" :type="simulating ? 'danger' : 'success'" icon="el-icon-video-play">
+          {{ simulating ? '停止更新' : '开始更新' }}
+        </el-button>
+        <el-button @click="addRandomStock" type="primary" icon="el-icon-circle-plus">添加随机股票</el-button>
+        <el-button @click="clearAllStocks" type="warning" icon="el-icon-delete">清空表格</el-button>
+      </div>
+      
+      <div class="price-table">
+        <div class="table-wrapper">
+          <el-table
+            :data="stocks"
+            class="stock-table"
+            stripe
+            height="100%"
+            style="width: 100%">
+            <el-table-column
+              label="股票代码"
+              width="120">
+              <template slot-scope="scope">
+                <span class="symbol-cell">{{ scope.row.symbol }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="公司名称"
+              min-width="180">
+              <template slot-scope="scope">
+                <span class="name-cell">{{ scope.row.name }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="买入价"
+              width="120"
+              align="right">
+              <template slot-scope="scope">
+                <span :class="{'price-up': scope.row.askPriceChange === 'up', 'price-down': scope.row.askPriceChange === 'down'}">
+                  {{ scope.row.askPrice.toFixed(2) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="卖出价"
+              width="120"
+              align="right">
+              <template slot-scope="scope">
+                <span :class="{'price-up': scope.row.bidPriceChange === 'up', 'price-down': scope.row.bidPriceChange === 'down'}">
+                  {{ scope.row.bidPrice.toFixed(2) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="价差"
+              width="100"
+              align="right">
+              <template slot-scope="scope">
+                <span :class="{'spread-positive': (scope.row.askPrice - scope.row.bidPrice) > 0, 'spread-negative': (scope.row.askPrice - scope.row.bidPrice) < 0}">
+                  {{ (scope.row.askPrice - scope.row.bidPrice).toFixed(2) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="涨跌幅"
+              width="100"
+              align="right">
+              <template slot-scope="scope">
+                <span :class="{'price-up': scope.row.changePercent > 0, 'price-down': scope.row.changePercent < 0}">
+                  {{ scope.row.changePercent > 0 ? '+' : '' }}{{ scope.row.changePercent.toFixed(2) }}%
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="最后更新"
+              width="140">
+              <template slot-scope="scope">
+                <span class="last-update">{{ scope.row.lastUpdate }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="操作"
+              width="100"
+              align="center">
+              <template slot-scope="scope">
+                <el-button
+                  size="mini"
+                  type="danger"
+                  icon="el-icon-delete"
+                  @click="removeStock(scope.$index)">移除
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </div>
+      
+      <div class="stats-bar">
+        <div>共 {{ stocks.length }} 只股票</div>
+        <div>最后刷新: {{ lastRefreshTime }}</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    new Vue({
+      el: '#app',
+      data() {
+        return {
+          stocks: [
+            { 
+              symbol: 'AAPL', 
+              name: '苹果公司', 
+              askPrice: 175.32, 
+              bidPrice: 175.30,
+              askPriceChange: null,
+              bidPriceChange: null,
+              lastUpdate: this.getCurrentTime(),
+              changePercent: 0.52
+            },
+            { 
+              symbol: 'MSFT', 
+              name: '微软公司', 
+              askPrice: 338.45, 
+              bidPrice: 338.42,
+              askPriceChange: null,
+              bidPriceChange: null,
+              lastUpdate: this.getCurrentTime(),
+              changePercent: 1.23
+            },
+            { 
+              symbol: 'GOOGL', 
+              name: '谷歌', 
+              askPrice: 138.25, 
+              bidPrice: 138.20,
+              askPriceChange: null,
+              bidPriceChange: null,
+              lastUpdate: this.getCurrentTime(),
+              changePercent: -0.35
+            },
+            { 
+              symbol: 'AMZN', 
+              name: '亚马逊', 
+              askPrice: 145.18, 
+              bidPrice: 145.15,
+              askPriceChange: null,
+              bidPriceChange: null,
+              lastUpdate: this.getCurrentTime(),
+              changePercent: 2.15
+            },
+            { 
+              symbol: 'TSLA', 
+              name: '特斯拉', 
+              askPrice: 245.67, 
+              bidPrice: 245.60,
+              askPriceChange: null,
+              bidPriceChange: null,
+              lastUpdate: this.getCurrentTime(),
+              changePercent: -1.45
+            }
+          ],
+          simulating: false,
+          updateInterval: null,
+          lastRefreshTime: this.getCurrentTime()
+        }
+      },
+      methods: {
+        // 生成随机股票数据
+        generateRandomStock() {
+          const companies = [
+            { symbol: 'NVDA', name: '英伟达' },
+            { symbol: 'JPM', name: '摩根大通' },
+            { symbol: 'V', name: 'Visa公司' },
+            { symbol: 'WMT', name: '沃尔玛' },
+            { symbol: 'JNJ', name: '强生公司' },
+            { symbol: 'PG', name: '宝洁公司' },
+            { symbol: 'DIS', name: '迪士尼' },
+            { symbol: 'NFLX', name: '奈飞' }
+          ];
+          const company = companies[Math.floor(Math.random() * companies.length)];
+          const basePrice = Math.random() * 500 + 50;
+          const changePercent = (Math.random() * 10 - 5); // -5% 到 +5%
+          
+          return {
+            symbol: company.symbol,
+            name: company.name,
+            askPrice: basePrice,
+            bidPrice: basePrice - 0.05,
+            askPriceChange: null,
+            bidPriceChange: null,
+            lastUpdate: this.getCurrentTime(),
+            changePercent: changePercent
+          };
+        },
+        
+        // 添加随机股票
+        addRandomStock() {
+          this.stocks.push(this.generateRandomStock());
+        },
+        
+        // 移除股票
+        removeStock(index) {
+          this.stocks.splice(index, 1);
+        },
+        
+        // 清空所有股票
+        clearAllStocks() {
+          this.stocks = [];
+        },
+        
+        // 获取当前时间
+        getCurrentTime() {
+          return new Date().toLocaleTimeString();
+        },
+        
+        // 更新价格
+        updatePrices() {
+          this.stocks.forEach(stock => {
+            // 保存旧价格用于比较
+            const oldAskPrice = stock.askPrice;
+            const oldBidPrice = stock.bidPrice;
+            
+            // 生成随机价格变动 (-0.5% 到 +0.5%)
+            const askChangePercent = (Math.random() - 0.5) / 100;
+            const bidChangePercent = (Math.random() - 0.5) / 100;
+            
+            // 计算新价格
+            const newAskPrice = oldAskPrice * (1 + askChangePercent);
+            const newBidPrice = oldBidPrice * (1 + bidChangePercent);
+            
+            // 更新价格和变化状态
+            stock.askPriceChange = newAskPrice > oldAskPrice ? 'up' : 
+                                  (newAskPrice < oldAskPrice ? 'down' : null);
+            stock.bidPriceChange = newBidPrice > oldBidPrice ? 'up' : 
+                                  (newBidPrice < oldBidPrice ? 'down' : null);
+            
+            stock.askPrice = newAskPrice;
+            stock.bidPrice = newBidPrice;
+            stock.lastUpdate = this.getCurrentTime();
+            
+            // 更新涨跌幅
+            stock.changePercent += (Math.random() - 0.5);
+            
+            // 1秒后清除变化状态
+            setTimeout(() => {
+              stock.askPriceChange = null;
+              stock.bidPriceChange = null;
+            }, 1000);
+          });
+          
+          this.lastRefreshTime = this.getCurrentTime();
+        },
+        
+        // 切换价格更新
+        toggleUpdates() {
+          if (this.simulating) {
+            clearInterval(this.updateInterval);
+            this.simulating = false;
+          } else {
+            this.updateInterval = setInterval(() => {
+              this.updatePrices();
+            }, 2000);
+            this.simulating = true;
+          }
+        }
+      },
+      mounted() {
+        // 初始更新一次价格
+        this.updatePrices();
+      },
+      beforeDestroy() {
+        // 组件销毁前清除定时器
+        if (this.updateInterval) {
+          clearInterval(this.updateInterval);
+        }
+      }
+    });
+  </script>
+</body>
+</html>
